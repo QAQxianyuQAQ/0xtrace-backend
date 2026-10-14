@@ -1,0 +1,2 @@
+# 沙箱环境禁止 JVM 自附加，改用子类 MockMaker，避免内联 MockMaker 初始化失败
+mock-maker-subclass

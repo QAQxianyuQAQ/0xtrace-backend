@@ -1,0 +1,49 @@
+# 测试配置：使用 H2 内存库与不可用的 Redis 端口，验证缓存降级路径
+spring:
+  datasource:
+    url: jdbc:h2:mem:tracequest;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:sql/schema-h2.sql
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6399
+      timeout: 200ms
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+    db-config:
+      id-type: input
+
+tracequest:
+  jwt:
+    # 仅用于自动化测试的固定密钥，不具备任何生产价值
+    secret: tracequest-test-jwt-secret
+  security:
+    answer-secret: tracequest-test-answer-secret
+    # 自动化测试通过 MockMvc 直接调用，不携带浏览器 Origin，因此关闭同源校验
+    enforce-same-origin: false
+    cookie-secure: false
+  minio:
+    # 测试环境不连接对象存储，这里只提供非空占位凭据
+    init-on-startup: false
+    access-key: test-access-key
+    secret-key: test-secret-key
+  bootstrap:
+    enabled: true
+    admin-username: admin
+    admin-password: admin12345
+    event-name: TraceQuest Test Event
+
+logging:
+  level:
+    root: WARN
+    com.qaqxianyuqaq.backend: INFO

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# 提交前钩子：拒绝把疑似凭据写入版本库。
+set -euo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+# 以 bash 调用，避免因缺少可执行位而跳过扫描
+if [[ ! -f scripts/scan-secrets.sh ]]; then
+  echo "提示：未找到 scripts/scan-secrets.sh，跳过敏感信息扫描"
+  exit 0
+fi
+
+bash scripts/scan-secrets.sh --staged

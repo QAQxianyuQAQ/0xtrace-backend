@@ -1,0 +1,15 @@
+target/
+.git/
+.gitlab-ci.yml
+.github/
+.githooks/
+scripts/
+.env
+.env.example
+.mvn/
+k8s/
+docs/
+*.md
+*.iml
+.idea/
+.vscode/

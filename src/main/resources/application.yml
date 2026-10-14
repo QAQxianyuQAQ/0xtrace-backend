@@ -1,0 +1,119 @@
+# TraceQuest 竞赛平台后端基础配置
+# 安全约定：本文件不得包含任何真实凭据。所有敏感项只从环境变量读取，缺失时启动即失败（fail-fast）。
+# 本地开发请使用 dev profile：--spring.profiles.active=dev（见 application-dev.yml）
+server:
+  port: ${TQ_SERVER_PORT:8080}
+  shutdown: graceful
+
+spring:
+  application:
+    name: tracequest-backend
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  datasource:
+    url: jdbc:mysql://${TQ_DB_HOST:localhost}:${TQ_DB_PORT:3306}/${TQ_DB_NAME:tracequest}?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    # 数据库账号不得回落到内置默认值，避免误用弱口令部署
+    username: ${TQ_DB_USERNAME:}
+    password: ${TQ_DB_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+  # 生产环境的建表脚本位于 resources/sql，由发布流程执行；应用启动不自动改表
+  sql:
+    init:
+      mode: never
+  data:
+    redis:
+      host: ${TQ_REDIS_HOST:localhost}
+      port: ${TQ_REDIS_PORT:6379}
+      password: ${TQ_REDIS_PASSWORD:}
+      timeout: 2s
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 60MB
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+    db-config:
+      id-type: input
+
+# 应用级配置：认证、存储、限流、上传与初始化数据
+tracequest:
+  jwt:
+    # 令牌签名密钥：必须由 TQ_JWT_SECRET 注入（建议 32 字节以上随机值）
+    secret: ${TQ_JWT_SECRET}
+    issuer: ${TQ_JWT_ISSUER:tracequest}
+    ttl: ${TQ_JWT_TTL:8h}
+  security:
+    # 题目答案加密密钥：必须由 TQ_ANSWER_SECRET 注入
+    answer-secret: ${TQ_ANSWER_SECRET}
+    cookie-name: ${TQ_SESSION_COOKIE:tq_session}
+    cookie-secure: ${TQ_COOKIE_SECURE:true}
+    cookie-same-site: ${TQ_COOKIE_SAME_SITE:Strict}
+    allowed-origins: []
+    enforce-same-origin: ${TQ_ENFORCE_SAME_ORIGIN:true}
+    # 生产 profile 下强制校验密钥强度；非生产环境仅告警
+    strict-secret-check: ${TQ_STRICT_SECRET_CHECK:false}
+  minio:
+    endpoint: ${TQ_MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${TQ_MINIO_ACCESS_KEY:}
+    secret-key: ${TQ_MINIO_SECRET_KEY:}
+    bucket: ${TQ_MINIO_BUCKET:tracequest}
+    presign-ttl: ${TQ_MINIO_PRESIGN_TTL:5m}
+    init-on-startup: ${TQ_MINIO_INIT:true}
+  rate-limit:
+    login-per-minute: 10
+    login-failure-threshold: 8
+    login-failure-window: 15m
+    submission-per-minute: 30
+    location-verify-per-minute: 20
+    admin-write-per-minute: 60
+  storage:
+    max-attachment-bytes: 52428800
+    max-cover-bytes: 10485760
+    cover-content-types:
+      - image/png
+      - image/jpeg
+      - image/webp
+      - image/avif
+    blocked-attachment-extensions:
+      - exe
+      - dll
+      - so
+      - sh
+      - bat
+      - cmd
+      - msi
+      - jar
+      - php
+      - jsp
+  bootstrap:
+    # 仅本地/测试环境使用；生产必须为 false（否则启动期密钥体检会直接失败）
+    enabled: ${TQ_BOOTSTRAP_ENABLED:true}
+    admin-username: ${TQ_ADMIN_USERNAME:admin}
+    admin-password: ${TQ_ADMIN_PASSWORD:}
+    event-name: ${TQ_EVENT_NAME:TraceQuest Season 01}
+    event-timezone: ${TQ_EVENT_TIMEZONE:Asia/Shanghai}
+
+logging:
+  level:
+    root: INFO
+    com.qaqxianyuqaq.backend: INFO
+  pattern:
+    # 日志中携带 requestId，便于与错误响应中的 requestId 串联
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{requestId:-}] %logger{36} - %msg%n"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

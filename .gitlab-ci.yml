@@ -1,0 +1,120 @@
+# TraceQuest 后端流水线：lint → 编译 → 单元测试 → 集成测试 → 镜像 → 推送 → 分环境部署
+stages:
+  - lint
+  - build
+  - unit-test
+  - integration-test
+  - package
+  - push
+  - deploy
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
+  MAVEN_CLI_OPTS: "-B --no-transfer-progress"
+  # dind 服务与客户端通过本地端口通信（CI 变量中不保存任何真实凭据）
+  DOCKER_HOST: "tcp://docker:2375"
+  DOCKER_TLS_CERTDIR: ""
+
+default:
+  image: maven:3.9.11-eclipse-temurin-25
+  interruptible: true
+  cache:
+    key: "$CI_COMMIT_REF_SLUG"
+    paths:
+      - .m2/repository
+
+# 1. 静态检查：敏感信息扫描 + Java 25 工具链与编译告警
+lint:
+  stage: lint
+  script:
+    - bash scripts/scan-secrets.sh
+    - mvn $MAVEN_CLI_OPTS -DskipTests validate
+    - mvn $MAVEN_CLI_OPTS -DskipTests -Dmaven.compiler.showWarnings=true clean compile
+
+# 2. 编译并产出构件，供后续阶段复用
+build:
+  stage: build
+  script:
+    - mvn $MAVEN_CLI_OPTS -DskipTests package
+  artifacts:
+    paths:
+      - target/*.jar
+    expire_in: 1 day
+
+# 3. 单元测试（surefire，服务层业务逻辑）
+unit-test:
+  stage: unit-test
+  script:
+    # 默认配置排除 integration 分组，只执行单元测试
+    - mvn $MAVEN_CLI_OPTS test
+  artifacts:
+    when: always
+    reports:
+      junit: target/surefire-reports/TEST-*.xml
+
+# 4. 集成测试（全链路接口验证）
+integration-test:
+  stage: integration-test
+  script:
+    # 传入不存在的分组名以取消默认排除，从而执行 @Tag("integration") 的全链路用例
+    - mvn $MAVEN_CLI_OPTS test -Dtest.excluded.groups=none
+  artifacts:
+    when: always
+    reports:
+      junit: target/surefire-reports/TEST-*.xml
+
+# 5. 构建容器镜像
+package-image:
+  stage: package
+  image: docker:27
+  services:
+    - docker:27-dind
+  script:
+    - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" .
+
+# 6. 推送镜像到镜像仓库
+push-image:
+  stage: push
+  image: docker:27
+  services:
+    - docker:27-dind
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^(main|master|release\/.*)$/'
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+
+# 7. 部署：staging 自动，production 需人工确认
+# 部署凭据 KUBE_CONFIG（base64 编码的 kubeconfig）需配置为受保护的 CI 变量；
+# 未配置时跳过部署任务，避免出现无意义的失败流水线。
+.kubectl-base: &kubectl-base
+  image: bitnami/kubectl:latest
+  before_script:
+    - mkdir -p "$HOME/.kube"
+    - printf '%s' "$KUBE_CONFIG" | base64 -d > "$HOME/.kube/config"
+    - chmod 600 "$HOME/.kube/config"
+
+deploy-staging:
+  <<: *kubectl-base
+  stage: deploy
+  environment:
+    name: staging
+  rules:
+    - if: '$KUBE_CONFIG && $CI_COMMIT_BRANCH =~ /^(main|master|release\/.*)$/'
+  script:
+    - kubectl -n tracequest-staging set image deployment/tracequest-backend backend="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - kubectl -n tracequest-staging rollout status deployment/tracequest-backend --timeout=180s
+
+deploy-production:
+  <<: *kubectl-base
+  stage: deploy
+  environment:
+    name: production
+  allow_failure: false
+  rules:
+    - if: '$KUBE_CONFIG && $CI_COMMIT_TAG'
+      when: manual
+  script:
+    - kubectl -n tracequest set image deployment/tracequest-backend backend="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - kubectl -n tracequest rollout status deployment/tracequest-backend --timeout=180s

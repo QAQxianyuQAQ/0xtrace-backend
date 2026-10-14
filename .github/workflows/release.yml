@@ -1,0 +1,80 @@
+# 发布流水线：打 tag 时构建并推送镜像到 GHCR，手动触发可继续部署到 Kubernetes
+name: release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    name: 构建并推送镜像
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: 打包应用
+        run: mvn -B --no-transfer-progress -DskipTests package
+      - name: 生成小写镜像名
+        id: meta
+        run: |
+          # GHCR 要求镜像名全小写，仓库名含大写字母时需要转换
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ github.ref_name }}
+            ${{ steps.meta.outputs.image }}:latest
+
+  deploy:
+    name: 部署到 Kubernetes
+    needs: image
+    # 仅手动触发时执行，配合 environment protection 做发布审批
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: 校验部署凭据
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          if [ -z "${KUBE_CONFIG}" ]; then
+            echo "未配置 secrets.KUBE_CONFIG，无法执行部署" >&2
+            exit 1
+          fi
+      - name: 配置 kubeconfig
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          printf '%s' "${KUBE_CONFIG}" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+      - name: 滚动更新镜像
+        env:
+          IMAGE: ${{ needs.image.outputs.image }}
+          TAG: ${{ github.ref_name }}
+          NAMESPACE: ${{ vars.K8S_NAMESPACE || 'tracequest' }}
+        run: |
+          kubectl -n "${NAMESPACE}" set image deployment/tracequest-backend backend="${IMAGE}:${TAG}"
+          kubectl -n "${NAMESPACE}" rollout status deployment/tracequest-backend --timeout=180s
