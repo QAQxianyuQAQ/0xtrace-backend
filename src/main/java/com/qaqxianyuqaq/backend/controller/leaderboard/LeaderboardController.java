@@ -22,12 +22,14 @@ public class LeaderboardController {
         this.leaderboardService = leaderboardService;
     }
 
-    /** 分页排名，scope=team|individual；登录后返回 isMe 标记。 */
+    /** 按赛事分页返回队伍排名；登录后返回 isMe 标记。 */
     @GetMapping
     public LeaderboardVO list(@RequestParam(required = false, defaultValue = "team") String scope,
+                                              @RequestParam(required = false) String eventId,
                                               @RequestParam(required = false) Integer page,
                                               @RequestParam(required = false) Integer pageSize) {
         PageQueryDTO query = PageUtil.normalize(page, pageSize);
-        return leaderboardService.publicLeaderboard(scope, SecurityUtils.currentPrincipalOrNull(), query);
+        return leaderboardService.publicLeaderboard(scope, eventId,
+                SecurityUtils.currentPrincipalOrNull(), query);
     }
 }

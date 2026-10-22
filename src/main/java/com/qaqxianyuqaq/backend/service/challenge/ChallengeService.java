@@ -18,8 +18,8 @@ public interface ChallengeService {
     Challenge requireByCode(String code);
 
     /** 选手端题目列表，仅返回已发布/暂停题目且不含答案。 */
-    PageVO<ChallengeVO> listPublic(String category, String difficulty, UserPrincipal viewer,
-                                                 PageQueryDTO query);
+    PageVO<ChallengeVO> listPublic(String eventId, String category, String difficulty,
+                                   UserPrincipal viewer, PageQueryDTO query);
 
     /** 选手端题目详情。 */
     ChallengeVO publicDetail(String code, UserPrincipal viewer);

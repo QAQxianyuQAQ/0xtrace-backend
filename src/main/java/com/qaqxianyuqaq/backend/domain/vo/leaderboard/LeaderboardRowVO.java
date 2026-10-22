@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 @Setter
 public class LeaderboardRowVO {
 
-    /** 统计主体：队伍模式下为队伍 ID，个人模式下为用户 ID。 */
+    /** 统计主体：新赛事规则下固定为队伍 ID。 */
     private String subjectId;
 
     private String subjectName;

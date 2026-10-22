@@ -13,14 +13,16 @@ import com.qaqxianyuqaq.backend.domain.entity.User;
 import com.qaqxianyuqaq.backend.domain.enums.AccountStatus;
 import com.qaqxianyuqaq.backend.exception.ErrorCode;
 import com.qaqxianyuqaq.backend.exception.ForbiddenException;
+import com.qaqxianyuqaq.backend.exception.NotFoundException;
 import com.qaqxianyuqaq.backend.exception.UnauthorizedException;
-import com.qaqxianyuqaq.backend.repository.user.TeamMapper;
 import com.qaqxianyuqaq.backend.repository.user.UserMapper;
 import com.qaqxianyuqaq.backend.security.JwtTokenProvider;
 import com.qaqxianyuqaq.backend.security.UserPrincipal;
 import com.qaqxianyuqaq.backend.service.auth.AuthService;
+import com.qaqxianyuqaq.backend.service.contestant.TeamService;
 import com.qaqxianyuqaq.backend.service.cache.RateLimitService;
 import com.qaqxianyuqaq.backend.service.cache.SessionService;
+import com.qaqxianyuqaq.backend.service.event.EventService;
 import com.qaqxianyuqaq.backend.util.TimeUtil;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -42,8 +44,6 @@ public class AuthServiceImpl implements AuthService {
 
     private final UserMapper userMapper;
 
-    private final TeamMapper teamMapper;
-
     private final PasswordEncoder passwordEncoder;
 
     private final RateLimitService rateLimitService;
@@ -52,18 +52,24 @@ public class AuthServiceImpl implements AuthService {
 
     private final TraceQuestProperties properties;
 
+    private final TeamService teamService;
+
+    private final EventService eventService;
+
     public AuthServiceImpl(AuthenticationManager authenticationManager, JwtTokenProvider jwtTokenProvider,
-                           UserMapper userMapper, TeamMapper teamMapper, PasswordEncoder passwordEncoder,
+                           UserMapper userMapper, PasswordEncoder passwordEncoder,
                            RateLimitService rateLimitService, SessionService sessionService,
-                           TraceQuestProperties properties) {
+                           TraceQuestProperties properties, TeamService teamService,
+                           EventService eventService) {
         this.authenticationManager = authenticationManager;
         this.jwtTokenProvider = jwtTokenProvider;
         this.userMapper = userMapper;
-        this.teamMapper = teamMapper;
         this.passwordEncoder = passwordEncoder;
         this.rateLimitService = rateLimitService;
         this.sessionService = sessionService;
         this.properties = properties;
+        this.teamService = teamService;
+        this.eventService = eventService;
     }
 
     @Override
@@ -110,8 +116,9 @@ public class AuthServiceImpl implements AuthService {
         // 7. 基于账号当前会话版本签发 JWT，令牌由控制器写入 HttpOnly Cookie
         UserPrincipal principal = new UserPrincipal(user);
         IssuedToken issued = jwtTokenProvider.issue(principal);
+        Team team = resolveCurrentTeam(user);
         LoginVO loginVO = new LoginVO(user.getId(), user.getUsername(),
-                user.getRole().apiValue(), user.getTeamId(), issued.expiresAt());
+                user.getRole().apiValue(), team == null ? null : team.getId(), issued.expiresAt());
         return new AuthSessionVO(issued.token(), issued.jwtId(),
                 properties.getJwt().getTtl().toSeconds(), loginVO);
     }
@@ -130,18 +137,23 @@ public class AuthServiceImpl implements AuthService {
             throw new UnauthorizedException("账号不存在或已被删除");
         }
 
-        // 2. 补齐队伍名称等展示字段
-        return new MeVO(user.getId(), user.getUsername(), user.getRole().apiValue(), user.getTeamId(),
-                resolveTeamName(user.getTeamId()), user.getNickname(), user.getAvatarUrl(),
+        // 2. 补齐当前赛事的队伍与展示字段
+        Team team = resolveCurrentTeam(user);
+        return new MeVO(user.getId(), user.getUsername(), user.getRole().apiValue(),
+                team == null ? null : team.getId(), team == null ? null : team.getName(),
+                user.getNickname(), user.getAvatarUrl(),
                 user.getStatus().apiValue(), user.getLastLoginAt());
     }
 
-    /** 查询队伍名称，未组队时返回 null。 */
-    private String resolveTeamName(String teamId) {
-        if (teamId == null) {
+    /** 查询当前赛事队伍；尚未配置赛事或未组队时返回 null。 */
+    private Team resolveCurrentTeam(User user) {
+        if (user.getRole() != com.qaqxianyuqaq.backend.domain.enums.UserRole.CONTESTANT) {
             return null;
         }
-        Team team = teamMapper.selectById(teamId);
-        return team == null ? null : team.getName();
+        try {
+            return teamService.findMembership(eventService.requireCurrent().getId(), user.getId());
+        } catch (NotFoundException exception) {
+            return null;
+        }
     }
 }

@@ -21,21 +21,28 @@ CREATE INDEX IF NOT EXISTS idx_users_role_status ON users (role, status);
 
 CREATE TABLE IF NOT EXISTS teams (
     id         VARCHAR(40)  NOT NULL,
+    event_id   VARCHAR(40)  NULL,
     name       VARCHAR(128) NOT NULL,
+    join_code  VARCHAR(32)  NULL,
+    created_by VARCHAR(40)  NULL,
     note       VARCHAR(512) NULL,
     created_at TIMESTAMP(3) NULL,
     PRIMARY KEY (id)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uk_teams_name ON teams (name);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_teams_event_name ON teams (event_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_teams_join_code ON teams (join_code);
+CREATE INDEX IF NOT EXISTS idx_teams_event ON teams (event_id);
 
 CREATE TABLE IF NOT EXISTS team_members (
     id        VARCHAR(40) NOT NULL,
+    event_id  VARCHAR(40) NULL,
     team_id   VARCHAR(40) NOT NULL,
     user_id   VARCHAR(40) NOT NULL,
     joined_at TIMESTAMP(3) NULL,
     PRIMARY KEY (id)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uk_team_members_user ON team_members (user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_team_members_event_user ON team_members (event_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_team_members_event_team ON team_members (event_id, team_id);
 
 CREATE TABLE IF NOT EXISTS events (
     id         VARCHAR(40)  NOT NULL,
@@ -44,6 +51,7 @@ CREATE TABLE IF NOT EXISTS events (
     timezone   VARCHAR(64)  NOT NULL,
     starts_at  TIMESTAMP(3) NULL,
     ends_at    TIMESTAMP(3) NULL,
+    max_team_size INT        NOT NULL DEFAULT 4,
     created_at TIMESTAMP(3) NULL,
     updated_at TIMESTAMP(3) NULL,
     PRIMARY KEY (id)

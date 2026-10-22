@@ -9,7 +9,7 @@ import lombok.Setter;
 
 import java.time.LocalDateTime;
 
-/** 赛事配置实体：当前赛事名称、状态、时区与起止时间。 */
+/** 赛事配置实体：赛事名称、状态、时区、起止时间与队伍人数上限。 */
 @Getter
 @Setter
 @TableName("events")
@@ -28,6 +28,9 @@ public class EventConfig {
     private LocalDateTime startsAt;
 
     private LocalDateTime endsAt;
+
+    /** 每个队伍允许加入的最大成员数，创建赛事时确定。 */
+    private Integer maxTeamSize;
 
     private LocalDateTime createdAt;
 

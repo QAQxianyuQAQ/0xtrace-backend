@@ -13,6 +13,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.qaqxianyuqaq.backend.domain.entity.Solve;
+import com.qaqxianyuqaq.backend.domain.entity.EventConfig;
 import com.qaqxianyuqaq.backend.domain.entity.Team;
 import com.qaqxianyuqaq.backend.domain.entity.TeamMember;
 import com.qaqxianyuqaq.backend.domain.entity.User;
@@ -27,7 +28,9 @@ import com.qaqxianyuqaq.backend.repository.user.TeamMemberMapper;
 import com.qaqxianyuqaq.backend.repository.user.UserMapper;
 import com.qaqxianyuqaq.backend.security.UserPrincipal;
 import com.qaqxianyuqaq.backend.service.contestant.ContestantService;
+import com.qaqxianyuqaq.backend.service.contestant.TeamService;
 import com.qaqxianyuqaq.backend.service.cache.SessionService;
+import com.qaqxianyuqaq.backend.service.event.EventService;
 import com.qaqxianyuqaq.backend.util.CsvUtil;
 import com.qaqxianyuqaq.backend.util.EnumUtil;
 import com.qaqxianyuqaq.backend.util.IdGenerator;
@@ -66,45 +69,67 @@ public class ContestantServiceImpl implements ContestantService {
 
     private final SessionService sessionService;
 
+    private final TeamService teamService;
+
+    private final EventService eventService;
+
     public ContestantServiceImpl(UserMapper userMapper, TeamMapper teamMapper, TeamMemberMapper teamMemberMapper,
                                  SolveMapper solveMapper, PasswordEncoder passwordEncoder,
-                                 SessionService sessionService) {
+                                 SessionService sessionService, TeamService teamService,
+                                 EventService eventService) {
         this.userMapper = userMapper;
         this.teamMapper = teamMapper;
         this.teamMemberMapper = teamMemberMapper;
         this.solveMapper = solveMapper;
         this.passwordEncoder = passwordEncoder;
         this.sessionService = sessionService;
+        this.teamService = teamService;
+        this.eventService = eventService;
     }
 
     @Override
     public PageVO<ContestantVO> page(String q, String status, String teamId, PageQueryDTO query) {
-        // 1. 组装筛选条件：仅选手角色，可选状态、队伍与关键字
+        // 1. 读取当前赛事并组装选手筛选条件
+        EventConfig event = eventService.requireCurrent();
+        List<String> requestedTeamUserIds = teamId == null || teamId.isBlank() ? null
+                : teamMemberMapper.selectList(Wrappers.<TeamMember>lambdaQuery()
+                        .eq(TeamMember::getEventId, event.getId())
+                        .eq(TeamMember::getTeamId, teamId))
+                .stream().map(TeamMember::getUserId).toList();
+        if (requestedTeamUserIds != null && requestedTeamUserIds.isEmpty()) {
+            return new PageVO<>(List.of(), PageUtil.of(query.page(), query.pageSize(), 0));
+        }
         var wrapper = Wrappers.<User>lambdaQuery()
                 .eq(User::getRole, UserRole.CONTESTANT)
                 .eq(status != null && !status.isBlank(), User::getStatus,
                         EnumUtil.parse(AccountStatus.class, status, "status"))
-                .eq(teamId != null && !teamId.isBlank(), User::getTeamId, teamId)
+                .in(requestedTeamUserIds != null, User::getId, requestedTeamUserIds)
                 .orderByDesc(User::getCreatedAt);
 
         // 2. 关键字同时匹配用户名与队伍名称
         if (q != null && !q.isBlank()) {
             List<String> matchedTeamIds = teamMapper.selectList(Wrappers.<Team>lambdaQuery()
+                            .eq(Team::getEventId, event.getId())
                             .like(Team::getName, q)).stream()
                     .map(Team::getId).toList();
+            List<String> matchedUserIds = matchedTeamIds.isEmpty() ? List.of()
+                    : teamMemberMapper.selectList(Wrappers.<TeamMember>lambdaQuery()
+                            .eq(TeamMember::getEventId, event.getId())
+                            .in(TeamMember::getTeamId, matchedTeamIds))
+                    .stream().map(TeamMember::getUserId).toList();
             wrapper.and(condition -> {
                 condition.like(User::getUsername, q);
-                if (!matchedTeamIds.isEmpty()) {
-                    condition.or().in(User::getTeamId, matchedTeamIds);
+                if (!matchedUserIds.isEmpty()) {
+                    condition.or().in(User::getId, matchedUserIds);
                 }
             });
         }
 
-        // 3. 分页查询并批量装配队伍名称
+        // 3. 分页查询并按当前赛事成员关系批量装配队伍名称
         IPage<User> page = userMapper.selectPage(new Page<>(query.page(), query.pageSize()), wrapper);
-        Map<String, Team> teams = loadTeams(page.getRecords());
+        Map<String, Team> membershipTeams = loadMembershipTeams(event.getId(), page.getRecords());
         List<ContestantVO> items = page.getRecords().stream()
-                .map(user -> toVO(user, teams.get(user.getTeamId())))
+                .map(user -> toVO(user, membershipTeams.get(user.getId())))
                 .toList();
         return PageUtil.toPage(page, items);
     }
@@ -119,8 +144,10 @@ public class ContestantServiceImpl implements ContestantService {
             throw new ConflictException("用户名已存在：" + request.username());
         }
 
-        // 2. 解析或创建队伍
-        Team team = resolveTeam(request.teamId(), request.teamName(), true);
+        // 2. 在当前赛事中解析或创建队伍
+        EventConfig event = eventService.requireCurrent();
+        Team team = teamService.resolveManagedTeam(event.getId(), request.teamId(), request.teamName(),
+                true, operator == null ? null : operator.userId());
 
         // 3. 组装账号实体，密码使用 BCrypt 哈希且不回显
         User user = new User();
@@ -136,8 +163,8 @@ public class ContestantServiceImpl implements ContestantService {
         user.setCreatedAt(TimeUtil.now());
         userMapper.insert(user);
 
-        // 4. 登记队伍成员关系，便于赛事复盘
-        syncTeamMember(user, team);
+        // 4. 登记当前赛事的队伍成员关系，便于赛事复盘与队伍计分
+        teamService.attachUser(event.getId(), user.getId(), team == null ? null : team.getId());
         return toVO(user, team);
     }
 
@@ -146,21 +173,24 @@ public class ContestantServiceImpl implements ContestantService {
         // 1. 读取账号并校验角色
         User user = requireContestant(userId);
 
-        // 2. 装配队伍信息
-        Team team = user.getTeamId() == null ? null : teamMapper.selectById(user.getTeamId());
+        // 2. 装配当前赛事的队伍信息
+        EventConfig event = eventService.requireCurrent();
+        Team team = teamService.findMembership(event.getId(), user.getId());
         return toVO(user, team);
     }
 
     @Override
     @Transactional
     public ContestantVO update(String userId, ContestantUpdateDTO request) {
-        // 1. 读取账号
+        // 1. 读取账号与当前赛事队伍
         User user = requireContestant(userId);
-        Team team = user.getTeamId() == null ? null : teamMapper.selectById(user.getTeamId());
+        EventConfig event = eventService.requireCurrent();
+        Team team = teamService.findMembership(event.getId(), user.getId());
 
         // 2. 应用队伍变更（支持按队伍编号或名称指定）
         if (request.teamId() != null || request.teamName() != null) {
-            team = resolveTeam(request.teamId(), request.teamName(), false);
+            team = teamService.resolveManagedTeam(event.getId(), request.teamId(), request.teamName(),
+                    false, null);
             user.setTeamId(team == null ? null : team.getId());
         }
 
@@ -184,9 +214,9 @@ public class ContestantServiceImpl implements ContestantService {
             }
         }
 
-        // 5. 落库并同步队伍成员关系
+        // 5. 落库并同步当前赛事队伍成员关系
         userMapper.updateById(user);
-        syncTeamMember(user, team);
+        teamService.attachUser(event.getId(), user.getId(), team == null ? null : team.getId());
         return toVO(user, team);
     }
 
@@ -215,8 +245,9 @@ public class ContestantServiceImpl implements ContestantService {
             sessionService.bumpTokenVersion(userId);
         }
 
-        // 3. 返回最新账号视图
-        Team team = user.getTeamId() == null ? null : teamMapper.selectById(user.getTeamId());
+        // 3. 返回最新账号与当前赛事队伍视图
+        EventConfig event = eventService.requireCurrent();
+        Team team = teamService.findMembership(event.getId(), user.getId());
         return toVO(user, team);
     }
 
@@ -226,10 +257,11 @@ public class ContestantServiceImpl implements ContestantService {
         // 1. 读取账号
         User user = requireContestant(userId);
 
-        // 2. 存在历史解题记录时拒绝删除，保留赛事审计完整性
+        // 2. 存在个人或任一赛事队伍历史解题记录时拒绝删除，保留赛事审计完整性
         var solveQuery = Wrappers.<Solve>lambdaQuery().eq(Solve::getUserId, user.getId());
-        if (user.getTeamId() != null) {
-            solveQuery.or().eq(Solve::getTeamId, user.getTeamId());
+        List<String> membershipTeamIds = teamService.membershipTeamIds(user.getId());
+        if (!membershipTeamIds.isEmpty()) {
+            solveQuery.or().in(Solve::getTeamId, membershipTeamIds);
         }
         boolean hasSolves = solveMapper.exists(solveQuery);
         if (hasSolves) {
@@ -279,7 +311,9 @@ public class ContestantServiceImpl implements ContestantService {
                 skipped++;
                 continue;
             }
-            Team team = resolveTeam(null, valueOf(row, columns.get("team")), true);
+            EventConfig event = eventService.requireCurrent();
+            Team team = teamService.resolveManagedTeam(event.getId(), null,
+                    valueOf(row, columns.get("team")), true, null);
             User user = new User();
             user.setId(IdGenerator.next("usr"));
             user.setUsername(username.trim());
@@ -291,7 +325,7 @@ public class ContestantServiceImpl implements ContestantService {
             user.setTokenVersion(0);
             user.setCreatedAt(TimeUtil.now());
             userMapper.insert(user);
-            syncTeamMember(user, team);
+            teamService.attachUser(event.getId(), user.getId(), team == null ? null : team.getId());
             imported++;
         }
 
@@ -301,15 +335,16 @@ public class ContestantServiceImpl implements ContestantService {
 
     @Override
     public String exportCsv() {
-        // 1. 导出全部选手账号，字段与契约一致且绝不含密码
+        // 1. 导出全部选手账号，并按当前赛事成员关系装配队伍
         List<User> users = userMapper.selectList(Wrappers.<User>lambdaQuery()
                 .eq(User::getRole, UserRole.CONTESTANT)
                 .orderByAsc(User::getCreatedAt));
-        Map<String, Team> teams = loadTeams(users);
+        EventConfig event = eventService.requireCurrent();
+        Map<String, Team> teams = loadMembershipTeams(event.getId(), users);
         List<List<String>> rows = new ArrayList<>();
         rows.add(List.of("username", "team", "status", "created", "note"));
         for (User user : users) {
-            Team team = teams.get(user.getTeamId());
+            Team team = teams.get(user.getId());
             rows.add(List.of(user.getUsername(), team == null ? "" : team.getName(),
                     user.getStatus().apiValue(), TimeUtil.format(user.getCreatedAt()),
                     user.getNote() == null ? "" : user.getNote()));
@@ -328,50 +363,18 @@ public class ContestantServiceImpl implements ContestantService {
         return user;
     }
 
-    /** 解析队伍：优先使用编号，其次按名称查找或创建。 */
-    private Team resolveTeam(String teamId, String teamName, boolean createIfAbsent) {
-        if (teamId != null && !teamId.isBlank()) {
-            Team team = teamMapper.selectById(teamId);
-            if (team == null) {
-                throw new NotFoundException("队伍不存在");
-            }
-            return team;
+    /** 批量装载账号在当前赛事的队伍。 */
+    private Map<String, Team> loadMembershipTeams(String eventId, List<User> users) {
+        if (users.isEmpty()) {
+            return Map.of();
         }
-        if (teamName == null || teamName.isBlank()) {
-            return null;
-        }
-        String normalized = teamName.trim();
-        Team existing = teamMapper.selectOne(Wrappers.<Team>lambdaQuery().eq(Team::getName, normalized));
-        if (existing != null || !createIfAbsent) {
-            return existing;
-        }
-        // 队伍名称不存在时按需创建，便于现场快速录队
-        Team created = new Team();
-        created.setId(IdGenerator.next("team"));
-        created.setName(normalized);
-        created.setCreatedAt(TimeUtil.now());
-        teamMapper.insert(created);
-        return created;
-    }
-
-    /** 同步队伍成员关系，保证队伍变更可追溯。 */
-    private void syncTeamMember(User user, Team team) {
-        teamMemberMapper.delete(Wrappers.<TeamMember>lambdaQuery().eq(TeamMember::getUserId, user.getId()));
-        if (team == null) {
-            return;
-        }
-        TeamMember member = new TeamMember();
-        member.setId(IdGenerator.next("tm"));
-        member.setTeamId(team.getId());
-        member.setUserId(user.getId());
-        member.setJoinedAt(TimeUtil.now());
-        teamMemberMapper.insert(member);
-    }
-
-    /** 批量装载账号所属队伍。 */
-    private Map<String, Team> loadTeams(List<User> users) {
-        List<String> teamIds = users.stream().map(User::getTeamId).filter(java.util.Objects::nonNull).distinct()
-                .toList();
+        Map<String, String> teamIdByUser = teamMemberMapper.selectList(Wrappers.<TeamMember>lambdaQuery()
+                        .eq(TeamMember::getEventId, eventId)
+                        .in(TeamMember::getUserId, users.stream().map(User::getId).toList()))
+                .stream()
+                .collect(java.util.stream.Collectors.toMap(TeamMember::getUserId, TeamMember::getTeamId,
+                        (left, right) -> left));
+        List<String> teamIds = teamIdByUser.values().stream().distinct().toList();
         if (teamIds.isEmpty()) {
             return Map.of();
         }
@@ -379,7 +382,9 @@ public class ContestantServiceImpl implements ContestantService {
         for (Team team : teamMapper.selectBatchIds(teamIds)) {
             teams.put(team.getId(), team);
         }
-        return teams;
+        Map<String, Team> membershipTeams = new HashMap<>();
+        teamIdByUser.forEach((userId, teamId) -> membershipTeams.put(userId, teams.get(teamId)));
+        return membershipTeams;
     }
 
     /** 读取 CSV 文本，限制为 UTF-8。 */

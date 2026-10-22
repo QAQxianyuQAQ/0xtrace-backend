@@ -31,8 +31,8 @@ public final class CacheKeys {
     /** 当前赛事缓存：60 秒过期，赛事配置更新时删除。 */
     public static final String CURRENT_EVENT = PREFIX + "event:current";
 
-    /** 排行榜缓存：30 秒过期，新增解题或手工调整积分时删除对应模式缓存。 */
-    public static final String LEADERBOARD = PREFIX + "leaderboard:%s:%d:%d";
+    /** 排行榜缓存：30 秒过期，键包含赛事，避免不同赛事排名串用。 */
+    public static final String LEADERBOARD = PREFIX + "leaderboard:%s:%s:%d:%d";
 
     /** 排行榜缓存前缀，用于解题或调整积分后整体失效。 */
     public static final String LEADERBOARD_PREFIX = PREFIX + "leaderboard:";
@@ -66,7 +66,7 @@ public final class CacheKeys {
     }
 
     /** 拼接排行榜缓存键。 */
-    public static String leaderboard(String scope, int page, int pageSize) {
-        return LEADERBOARD.formatted(scope, page, pageSize);
+    public static String leaderboard(String eventId, String scope, int page, int pageSize) {
+        return LEADERBOARD.formatted(eventId, scope, page, pageSize);
     }
 }

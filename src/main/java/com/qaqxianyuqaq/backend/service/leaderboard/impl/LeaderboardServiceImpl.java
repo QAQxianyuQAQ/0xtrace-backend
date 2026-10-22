@@ -1,8 +1,22 @@
 package com.qaqxianyuqaq.backend.service.leaderboard.impl;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.qaqxianyuqaq.backend.domain.dto.common.PageQueryDTO;
 import com.qaqxianyuqaq.backend.domain.dto.leaderboard.ScoreAdjustmentDTO;
+import com.qaqxianyuqaq.backend.domain.entity.Challenge;
+import com.qaqxianyuqaq.backend.domain.entity.EventConfig;
+import com.qaqxianyuqaq.backend.domain.entity.ScoreAdjustment;
+import com.qaqxianyuqaq.backend.domain.entity.Solve;
+import com.qaqxianyuqaq.backend.domain.entity.Submission;
+import com.qaqxianyuqaq.backend.domain.entity.Team;
+import com.qaqxianyuqaq.backend.domain.entity.TeamMember;
+import com.qaqxianyuqaq.backend.domain.entity.User;
+import com.qaqxianyuqaq.backend.domain.enums.ScoreEventType;
+import com.qaqxianyuqaq.backend.domain.enums.UserRole;
 import com.qaqxianyuqaq.backend.domain.vo.common.PageVO;
+import com.qaqxianyuqaq.backend.domain.vo.contestant.TeamMemberVO;
 import com.qaqxianyuqaq.backend.domain.vo.leaderboard.LeaderboardItemVO;
 import com.qaqxianyuqaq.backend.domain.vo.leaderboard.LeaderboardRowVO;
 import com.qaqxianyuqaq.backend.domain.vo.leaderboard.LeaderboardStatsVO;
@@ -10,27 +24,20 @@ import com.qaqxianyuqaq.backend.domain.vo.leaderboard.LeaderboardVO;
 import com.qaqxianyuqaq.backend.domain.vo.leaderboard.ScoreEventVO;
 import com.qaqxianyuqaq.backend.domain.vo.leaderboard.TeamDetailVO;
 import com.qaqxianyuqaq.backend.domain.vo.leaderboard.TeamScoreVO;
-
-import com.baomidou.mybatisplus.core.metadata.IPage;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.qaqxianyuqaq.backend.domain.entity.Challenge;
-import com.qaqxianyuqaq.backend.domain.entity.EventConfig;
-import com.qaqxianyuqaq.backend.domain.entity.ScoreAdjustment;
-import com.qaqxianyuqaq.backend.domain.entity.Solve;
-import com.qaqxianyuqaq.backend.domain.entity.Team;
-import com.qaqxianyuqaq.backend.domain.entity.User;
-import com.qaqxianyuqaq.backend.domain.enums.ScoreEventType;
-import com.qaqxianyuqaq.backend.domain.enums.UserRole;
+import com.qaqxianyuqaq.backend.domain.vo.submission.AdminSubmissionLogVO;
+import com.qaqxianyuqaq.backend.exception.ConflictException;
 import com.qaqxianyuqaq.backend.exception.NotFoundException;
 import com.qaqxianyuqaq.backend.exception.ValidationFailedException;
 import com.qaqxianyuqaq.backend.repository.challenge.ChallengeMapper;
 import com.qaqxianyuqaq.backend.repository.leaderboard.ScoreAdjustmentMapper;
 import com.qaqxianyuqaq.backend.repository.submission.SolveMapper;
+import com.qaqxianyuqaq.backend.repository.submission.SubmissionMapper;
 import com.qaqxianyuqaq.backend.repository.user.TeamMapper;
+import com.qaqxianyuqaq.backend.repository.user.TeamMemberMapper;
 import com.qaqxianyuqaq.backend.repository.user.UserMapper;
 import com.qaqxianyuqaq.backend.security.UserPrincipal;
 import com.qaqxianyuqaq.backend.service.cache.CacheService;
+import com.qaqxianyuqaq.backend.service.contestant.TeamService;
 import com.qaqxianyuqaq.backend.service.event.EventService;
 import com.qaqxianyuqaq.backend.service.leaderboard.LeaderboardService;
 import com.qaqxianyuqaq.backend.util.CacheKeys;
@@ -44,6 +51,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -51,9 +59,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 排行榜与计分管理服务实现。
+ * 赛事队伍排行榜与计分管理服务实现。
  *
- * <p>排名规则固定为：总分降序 → 解题数降序 → 达到该分数的时间升序，与契约 8.2 一致。</p>
+ * <p>排名规则固定为：总分降序 → 解题数降序 → 达到该分数的时间升序。</p>
  */
 @Service
 public class LeaderboardServiceImpl implements LeaderboardService {
@@ -61,17 +69,18 @@ public class LeaderboardServiceImpl implements LeaderboardService {
     /** 榜单缓存有效期，短暂缓存以削峰。 */
     private static final Duration LEADERBOARD_TTL = Duration.ofSeconds(30);
 
-    /** 队伍模式标识。 */
+    /** 新需求只保留队伍排名维度。 */
     private static final String SCOPE_TEAM = "team";
 
-    /** 个人模式标识。 */
-    private static final String SCOPE_INDIVIDUAL = "individual";
-
     private final SolveMapper solveMapper;
+
+    private final SubmissionMapper submissionMapper;
 
     private final ScoreAdjustmentMapper scoreAdjustmentMapper;
 
     private final TeamMapper teamMapper;
+
+    private final TeamMemberMapper teamMemberMapper;
 
     private final UserMapper userMapper;
 
@@ -79,86 +88,125 @@ public class LeaderboardServiceImpl implements LeaderboardService {
 
     private final EventService eventService;
 
+    private final TeamService teamService;
+
     private final CacheService cacheService;
 
-    public LeaderboardServiceImpl(SolveMapper solveMapper, ScoreAdjustmentMapper scoreAdjustmentMapper,
-                                  TeamMapper teamMapper, UserMapper userMapper, ChallengeMapper challengeMapper,
-                                  EventService eventService, CacheService cacheService) {
+    public LeaderboardServiceImpl(SolveMapper solveMapper, SubmissionMapper submissionMapper,
+                                  ScoreAdjustmentMapper scoreAdjustmentMapper, TeamMapper teamMapper,
+                                  TeamMemberMapper teamMemberMapper, UserMapper userMapper,
+                                  ChallengeMapper challengeMapper, EventService eventService,
+                                  TeamService teamService, CacheService cacheService) {
         this.solveMapper = solveMapper;
+        this.submissionMapper = submissionMapper;
         this.scoreAdjustmentMapper = scoreAdjustmentMapper;
         this.teamMapper = teamMapper;
+        this.teamMemberMapper = teamMemberMapper;
         this.userMapper = userMapper;
         this.challengeMapper = challengeMapper;
         this.eventService = eventService;
+        this.teamService = teamService;
         this.cacheService = cacheService;
     }
 
     @Override
-    public LeaderboardVO publicLeaderboard(String scope, UserPrincipal viewer, PageQueryDTO query) {
+    public LeaderboardVO publicLeaderboard(String scope, String eventId, UserPrincipal viewer,
+                                           PageQueryDTO query) {
+        // 1. 归一化赛事与队伍维度，新版本不再提供选手个人排名
         String normalizedScope = normalizeScope(scope);
+        EventConfig event = resolveEvent(eventId);
 
-        // 1. 命中榜单缓存时直接返回，避免赛事期间高频聚合查询
-        String cacheKey = CacheKeys.leaderboard(normalizedScope, query.page(), query.pageSize());
+        // 2. 命中赛事级缓存时直接返回，并按当前登录态重算 isMe
+        String cacheKey = CacheKeys.leaderboard(event.getId(), normalizedScope,
+                query.page(), query.pageSize());
         Optional<String> cached = cacheService.get(cacheKey);
         if (cached.isPresent()) {
-            LeaderboardVO cachedVO = JsonUtil.fromJson(cached.get(),
-                    LeaderboardVO.class);
+            LeaderboardVO cachedVO = JsonUtil.fromJson(cached.get(), LeaderboardVO.class);
             if (cachedVO != null) {
-                // isMe 与登录态相关，缓存命中时按当前请求重新计算
-                return withIsMe(cachedVO, viewer, normalizedScope);
+                return withIsMe(cachedVO, viewer, event.getId(), normalizedScope);
             }
         }
 
-        // 2. 缓存缺失时执行数据库聚合
-        IPage<LeaderboardRowVO> rows = queryRows(normalizedScope, null, query);
-        LeaderboardVO result = assemble(rows, normalizedScope, viewer);
+        // 3. 缓存缺失时执行赛事内队伍聚合
+        IPage<LeaderboardRowVO> rows = queryRows(event.getId(), normalizedScope, null, query);
+        LeaderboardVO result = assemble(rows, event, normalizedScope, viewer);
 
-        // 3. 写回缓存，写缓存失败不影响主流程
+        // 4. 写回赛事级缓存，写缓存失败不影响主流程
         cacheService.set(cacheKey, JsonUtil.toJson(result), LEADERBOARD_TTL);
         return result;
     }
 
     @Override
-    public PageVO<LeaderboardItemVO> adminLeaderboard(String scope, String q, PageQueryDTO query) {
-        // 1. 执行带关键字筛选的聚合查询
+    public PageVO<LeaderboardItemVO> adminLeaderboard(String scope, String eventId, String q,
+                                                      PageQueryDTO query) {
+        // 1. 在指定赛事中执行带关键字筛选的队伍聚合
         String normalizedScope = normalizeScope(scope);
-        IPage<LeaderboardRowVO> rows = queryRows(normalizedScope, q, query);
+        EventConfig event = resolveEvent(eventId);
+        IPage<LeaderboardRowVO> rows = queryRows(event.getId(), normalizedScope, q, query);
 
-        // 2. 转换为后台榜单条目
-        List<LeaderboardItemVO> items = toItems(rows, normalizedScope, null);
-        return PageUtil.toPage(rows, items);
+        // 2. 转换为后台队伍榜单条目
+        return PageUtil.toPage(rows, toItems(rows, normalizedScope, event.getId(), null));
     }
 
     @Override
-    public TeamDetailVO teamDetail(String teamId) {
-        // 1. 读取队伍
-        Team team = teamMapper.selectById(teamId);
-        if (team == null) {
-            throw new NotFoundException("队伍不存在");
-        }
+    public TeamDetailVO teamDetail(String eventId, String teamId, PageQueryDTO query) {
+        // 1. 校验队伍属于指定赛事
+        EventConfig event = resolveEvent(eventId);
+        Team team = teamService.requireEventTeam(event.getId(), teamId);
 
-        // 2. 读取队伍积分事件明细
-        List<ScoreEventVO> events = collectScoreEvents(teamId, null, null);
+        // 2. 装载全部队伍成员及成员账号信息
+        List<TeamMember> memberships = teamService.members(team.getId());
+        Map<String, User> users = loadUsers(memberships.stream().map(TeamMember::getUserId).toList());
+        List<TeamMemberVO> members = memberships.stream()
+                .map(membership -> toMemberVO(membership, users.get(membership.getUserId()), team))
+                .toList();
+
+        // 3. 分页查询该队伍全部成员产生的提交日志
+        IPage<Submission> submissionPage = submissionMapper.selectPage(
+                new Page<>(query.page(), query.pageSize()),
+                Wrappers.<Submission>lambdaQuery()
+                        .eq(Submission::getTeamId, team.getId())
+                        .orderByDesc(Submission::getSubmittedAt));
+        Map<String, Challenge> challenges = loadChallenges(
+                submissionPage.getRecords().stream().map(Submission::getChallengeId).toList());
+        List<AdminSubmissionLogVO> logs = submissionPage.getRecords().stream()
+                .map(submission -> toSubmissionLog(submission, challenges.get(submission.getChallengeId()),
+                        users.get(submission.getUserId())))
+                .toList();
+
+        // 4. 汇总该赛事积分事件并计算排名
+        List<ScoreEventVO> events = collectScoreEvents(event.getId(), team.getId(), null, null);
         int score = events.stream().mapToInt(ScoreEventVO::delta).sum();
         int solvedCount = (int) events.stream()
-                .filter(event -> ScoreEventType.CHALLENGE_SOLVE.apiValue().equals(event.type()))
+                .filter(eventItem -> ScoreEventType.CHALLENGE_SOLVE.apiValue().equals(eventItem.type()))
                 .count();
-
-        // 3. 榜单排名在当前页大小范围内定位（大规模赛事建议改为专用排名查询）
-        int rank = locateRank(teamId, score, solvedCount);
-        return new TeamDetailVO(
-                new TeamScoreVO(team.getId(), team.getName(), rank, score, solvedCount), events);
+        int rank = locateRank(event.getId(), team.getId());
+        TeamScoreVO teamScore = new TeamScoreVO(team.getId(), team.getName(), rank, score, solvedCount);
+        return new TeamDetailVO(teamScore, members,
+                PageUtil.toPage(submissionPage, logs), events);
     }
 
     @Override
-    public PageVO<ScoreEventVO> scoreEvents(String teamId, String userId, String type,
-                                                            PageQueryDTO query) {
-        // 1. 汇总题目得分与手工调整事件
-        List<ScoreEventVO> events = collectScoreEvents(teamId, userId, type);
+    public PageVO<ScoreEventVO> scoreEvents(String eventId, String teamId, String userId,
+                                            String type, PageQueryDTO query) {
+        // 1. 校验查询主体必须且只能指定队伍或账号
+        boolean hasTeam = teamId != null && !teamId.isBlank();
+        boolean hasUser = userId != null && !userId.isBlank();
+        if (hasTeam == hasUser) {
+            throw new ValidationFailedException("teamId", "必须且只能指定 teamId 或 userId 之一");
+        }
+        EventConfig event = resolveEvent(eventId);
+        if (hasTeam) {
+            teamService.requireEventTeam(event.getId(), teamId);
+        }
 
-        // 2. 按时间倒序排列后在内存分页（事件量按队伍维度可控）
+        // 2. 汇总赛事内题目得分与手工调整事件
+        List<ScoreEventVO> events = collectScoreEvents(event.getId(), teamId, userId, type);
+
+        // 3. 按时间倒序后在内存分页
         List<ScoreEventVO> sorted = events.stream()
-                .sorted(Comparator.comparing(ScoreEventVO::awardedAt).reversed())
+                .sorted(Comparator.comparing(ScoreEventVO::awardedAt,
+                        Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
         List<ScoreEventVO> items = PageUtil.slice(sorted, query);
         return new PageVO<>(items, PageUtil.of(query.page(), query.pageSize(), sorted.size()));
@@ -166,19 +214,17 @@ public class LeaderboardServiceImpl implements LeaderboardService {
 
     @Override
     @Transactional
-    public ScoreEventVO adjustScore(ScoreAdjustmentDTO request,
-                                                    UserPrincipal operator) {
-        // 1. 校验调整主体唯一且存在
-        boolean hasTeam = request.teamId() != null && !request.teamId().isBlank();
-        boolean hasUser = request.userId() != null && !request.userId().isBlank();
-        if (hasTeam == hasUser) {
-            throw new ValidationFailedException("teamId", "必须且只能指定 teamId 或 userId 之一");
+    public ScoreEventVO adjustScore(ScoreAdjustmentDTO request, UserPrincipal operator) {
+        // 1. 新需求只允许按队伍调整积分
+        if (request.userId() != null && !request.userId().isBlank()) {
+            throw new ValidationFailedException("userId", "当前赛事只支持按队伍调整积分");
         }
-        if (hasTeam && teamMapper.selectById(request.teamId()) == null) {
+        if (request.teamId() == null || request.teamId().isBlank()) {
+            throw new ValidationFailedException("teamId", "必须指定队伍");
+        }
+        Team team = teamMapper.selectById(request.teamId());
+        if (team == null) {
             throw new NotFoundException("队伍不存在");
-        }
-        if (hasUser && userMapper.selectById(request.userId()) == null) {
-            throw new NotFoundException("账号不存在");
         }
 
         // 2. 校验分值与原因
@@ -189,54 +235,63 @@ public class LeaderboardServiceImpl implements LeaderboardService {
             throw new ValidationFailedException("reason", "必须填写调整原因");
         }
 
-        // 3. 落库保存调整记录，操作者与时间一并留痕
+        // 3. 落库保存队伍调整记录，操作者与时间一并留痕
         ScoreAdjustment adjustment = new ScoreAdjustment();
         adjustment.setId(IdGenerator.next("score"));
-        adjustment.setTeamId(hasTeam ? request.teamId() : null);
-        adjustment.setUserId(hasUser ? request.userId() : null);
+        adjustment.setTeamId(team.getId());
+        adjustment.setUserId(null);
         adjustment.setDelta(request.delta());
         adjustment.setReason(request.reason().trim());
         adjustment.setAdminId(operator == null ? null : operator.userId());
         adjustment.setCreatedAt(TimeUtil.now());
         scoreAdjustmentMapper.insert(adjustment);
 
-        // 4. 榜单缓存整体失效，保证调整结果立即生效
+        // 4. 榜单缓存整体失效，保证队伍分数立即生效
         cacheService.deleteByPrefix(CacheKeys.LEADERBOARD_PREFIX);
 
-        // 5. 返回事件视图
+        // 5. 返回队伍积分事件
         return new ScoreEventVO(adjustment.getId(), ScoreEventType.ADMIN_ADJUSTMENT.apiValue(),
                 null, null, null, adjustment.getDelta(), adjustment.getReason(),
                 operator == null ? null : operator.getUsername(), adjustment.getCreatedAt());
     }
 
-    /** 归一化榜单维度。 */
+    /** 解析赛事；未指定时使用当前赛事。 */
+    private EventConfig resolveEvent(String eventId) {
+        return eventId == null || eventId.isBlank()
+                ? eventService.requireCurrent() : eventService.requireById(eventId);
+    }
+
+    /** 归一化榜单维度，仅允许队伍排名。 */
     private String normalizeScope(String scope) {
         if (scope == null || scope.isBlank()) {
             return SCOPE_TEAM;
         }
         String normalized = scope.trim().toLowerCase();
-        if (!SCOPE_TEAM.equals(normalized) && !SCOPE_INDIVIDUAL.equals(normalized)) {
-            throw new ValidationFailedException("scope", "scope 仅支持 team 或 individual");
+        if (!SCOPE_TEAM.equals(normalized)) {
+            throw new ValidationFailedException("scope", "新赛事规则仅支持 scope=team");
         }
         return normalized;
     }
 
-    /** 按维度执行聚合查询。 */
-    private IPage<LeaderboardRowVO> queryRows(String scope, String keyword, PageQueryDTO query) {
-        Page<LeaderboardRowVO> page = new Page<>(query.page(), query.pageSize());
-        return SCOPE_INDIVIDUAL.equals(scope)
-                ? solveMapper.selectIndividualLeaderboard(page, keyword)
-                : solveMapper.selectTeamLeaderboard(page, keyword);
+    /** 执行赛事内队伍聚合查询。 */
+    private IPage<LeaderboardRowVO> queryRows(String eventId, String scope, String keyword,
+                                              PageQueryDTO query) {
+        if (!SCOPE_TEAM.equals(scope)) {
+            throw new ValidationFailedException("scope", "仅支持队伍排名");
+        }
+        return solveMapper.selectTeamLeaderboard(new Page<>(query.page(), query.pageSize()),
+                eventId, keyword);
     }
 
     /** 组装公开榜单响应。 */
-    private LeaderboardVO assemble(IPage<LeaderboardRowVO> rows, String scope, UserPrincipal viewer) {
-        List<LeaderboardItemVO> items = toItems(rows, scope, viewer);
-        EventConfig event = eventService.requireCurrent();
-        int teams = Math.toIntExact(teamMapper.selectCount(null));
-        int contestants = Math.toIntExact(userMapper.selectCount(Wrappers.<User>lambdaQuery()
-                .eq(User::getRole, UserRole.CONTESTANT)));
-        int solvedChallenges = distinctSolvedChallenges();
+    private LeaderboardVO assemble(IPage<LeaderboardRowVO> rows, EventConfig event,
+                                   String scope, UserPrincipal viewer) {
+        List<LeaderboardItemVO> items = toItems(rows, scope, event.getId(), viewer);
+        int teams = Math.toIntExact(teamMapper.selectCount(Wrappers.<Team>lambdaQuery()
+                .eq(Team::getEventId, event.getId())));
+        int contestants = Math.toIntExact(teamMemberMapper.selectCount(Wrappers.<TeamMember>lambdaQuery()
+                .eq(TeamMember::getEventId, event.getId())));
+        int solvedChallenges = distinctSolvedChallenges(event.getId());
         LeaderboardStatsVO stats =
                 new LeaderboardStatsVO(teams, contestants, solvedChallenges, event.getEndsAt());
         return new LeaderboardVO(TimeUtil.now(), stats, items, PageUtil.toPagination(rows));
@@ -244,17 +299,14 @@ public class LeaderboardServiceImpl implements LeaderboardService {
 
     /** 榜单条目转换，rank 由页偏移与行序推导。 */
     private List<LeaderboardItemVO> toItems(IPage<LeaderboardRowVO> rows, String scope,
-                                                            UserPrincipal viewer) {
+                                            String eventId, UserPrincipal viewer) {
+        Team viewerTeam = viewer == null ? null : teamService.findMembership(eventId, viewer.userId());
         long offset = (rows.getCurrent() - 1) * rows.getSize();
         List<LeaderboardItemVO> items = new ArrayList<>();
         int index = 0;
         for (LeaderboardRowVO row : rows.getRecords()) {
-            String subjectKey = viewer == null ? null
-                    : (SCOPE_INDIVIDUAL.equals(scope) ? viewer.userId() : viewer.teamId());
-            boolean isMe = subjectKey != null && subjectKey.equals(row.getSubjectId());
-            items.add(new LeaderboardItemVO((int) offset + index + 1,
-                    SCOPE_INDIVIDUAL.equals(scope) ? null : row.getSubjectId(),
-                    SCOPE_INDIVIDUAL.equals(scope) ? row.getSubjectId() : null,
+            boolean isMe = viewerTeam != null && viewerTeam.getId().equals(row.getSubjectId());
+            items.add(new LeaderboardItemVO((int) offset + index + 1, row.getSubjectId(), null,
                     row.getSubjectName(), row.getSolvedCount() == null ? 0 : row.getSolvedCount(),
                     row.getScore() == null ? 0 : row.getScore(), isMe, row.getLastSolvedAt()));
             index++;
@@ -262,80 +314,82 @@ public class LeaderboardServiceImpl implements LeaderboardService {
         return items;
     }
 
-    /** 缓存命中时重算 isMe，避免跨账号泄漏。 */
+    /** 缓存命中时按当前登录队伍重算 isMe，避免跨账号泄漏。 */
     private LeaderboardVO withIsMe(LeaderboardVO source, UserPrincipal viewer,
-                                                  String scope) {
+                                   String eventId, String scope) {
+        Team viewerTeam = viewer == null ? null : teamService.findMembership(eventId, viewer.userId());
         List<LeaderboardItemVO> items = source.items().stream()
                 .map(item -> new LeaderboardItemVO(item.rank(), item.teamId(), item.userId(),
                         item.teamName(), item.solvedCount(), item.score(),
-                        isMe(item, viewer, scope), item.lastSolvedAt()))
+                        viewerTeam != null && viewerTeam.getId().equals(item.teamId()),
+                        item.lastSolvedAt()))
                 .toList();
         return new LeaderboardVO(source.updatedAt(), source.stats(), items, source.pagination());
     }
 
-    /** 判断榜单条目是否属于当前登录主体。 */
-    private boolean isMe(LeaderboardItemVO item, UserPrincipal viewer, String scope) {
-        if (viewer == null) {
-            return false;
+    /** 统计赛事内已被不同队伍解出的题目数量。 */
+    private int distinctSolvedChallenges(String eventId) {
+        List<String> challengeIds = challengeMapper.selectList(Wrappers.<Challenge>lambdaQuery()
+                        .eq(Challenge::getEventId, eventId))
+                .stream().map(Challenge::getId).toList();
+        if (challengeIds.isEmpty()) {
+            return 0;
         }
-        String subjectKey = SCOPE_INDIVIDUAL.equals(scope) ? viewer.userId() : viewer.teamId();
-        if (subjectKey == null) {
-            return false;
-        }
-        String itemKey = SCOPE_INDIVIDUAL.equals(scope) ? item.userId() : item.teamId();
-        return subjectKey.equals(itemKey);
+        return Math.toIntExact(solveMapper.selectList(Wrappers.<Solve>lambdaQuery()
+                        .in(Solve::getChallengeId, challengeIds))
+                .stream().map(Solve::getChallengeId).distinct().count());
     }
 
-    /** 统计已被解出的不同题目数量。 */
-    private int distinctSolvedChallenges() {
-        List<Object> ids = solveMapper.selectObjs(Wrappers.<Solve>query().select("DISTINCT challenge_id"));
-        return ids.size();
-    }
-
-    /** 定位队伍排名，未上榜返回 0。 */
-    private int locateRank(String teamId, int score, int solvedCount) {
-        IPage<LeaderboardRowVO> rows = queryRows(SCOPE_TEAM, null, new PageQueryDTO(1, 100));
-        long offset = 0;
-        int index = 0;
+    /** 在赛事队伍榜中定位排名。 */
+    private int locateRank(String eventId, String teamId) {
+        IPage<LeaderboardRowVO> rows = solveMapper.selectTeamLeaderboard(
+                new Page<>(1, 1000), eventId, null);
+        int index = 1;
         for (LeaderboardRowVO row : rows.getRecords()) {
             if (teamId.equals(row.getSubjectId())) {
-                return (int) offset + index + 1;
+                return index;
             }
             index++;
         }
         return 0;
     }
 
-    /** 汇总题目得分与手工调整事件。 */
-    private List<ScoreEventVO> collectScoreEvents(String teamId, String userId, String type) {
+    /** 汇总赛事内题目得分与手工调整事件。 */
+    private List<ScoreEventVO> collectScoreEvents(String eventId, String teamId,
+                                                  String userId, String type) {
         String subjectKey = teamId != null ? teamId : userId;
         List<ScoreEventVO> events = new ArrayList<>();
         if (subjectKey != null) {
-            // 1. 题目得分事件
-            List<Solve> solves = solveMapper.selectList(Wrappers.<Solve>lambdaQuery()
-                    .eq(Solve::getSubjectKey, subjectKey));
-            Map<String, Challenge> challenges = solves.isEmpty() ? Map.of()
-                    : challengeMapper.selectBatchIds(solves.stream().map(Solve::getChallengeId).distinct().toList())
-                    .stream().collect(Collectors.toMap(Challenge::getId, Function.identity()));
+            // 1. 只装载赛事题目对应的解题得分事件
+            List<String> challengeIds = challengeMapper.selectList(Wrappers.<Challenge>lambdaQuery()
+                            .eq(Challenge::getEventId, eventId))
+                    .stream().map(Challenge::getId).toList();
+            List<Solve> solves = challengeIds.isEmpty() ? List.of()
+                    : solveMapper.selectList(Wrappers.<Solve>lambdaQuery()
+                    .eq(Solve::getSubjectKey, subjectKey)
+                    .in(Solve::getChallengeId, challengeIds));
+            Map<String, Challenge> challenges = loadChallenges(
+                    solves.stream().map(Solve::getChallengeId).toList());
             for (Solve solve : solves) {
                 Challenge challenge = challenges.get(solve.getChallengeId());
                 int base = solve.getBasePoints() == null ? 0 : solve.getBasePoints();
                 int bonus = solve.getBonusPoints() == null ? 0 : solve.getBonusPoints();
-                events.add(new ScoreEventVO(solve.getId(),
-                        ScoreEventType.CHALLENGE_SOLVE.apiValue(),
-                        challenge == null ? null : challenge.getCode(), base, bonus, base + bonus, null, null,
-                        solve.getSolvedAt()));
+                events.add(new ScoreEventVO(solve.getId(), ScoreEventType.CHALLENGE_SOLVE.apiValue(),
+                        challenge == null ? null : challenge.getCode(), base, bonus, base + bonus,
+                        null, null, solve.getSolvedAt()));
             }
         }
 
-        // 2. 手工调整事件
-        List<ScoreAdjustment> adjustments = scoreAdjustmentMapper.selectList(Wrappers.<ScoreAdjustment>lambdaQuery()
-                .eq(teamId != null, ScoreAdjustment::getTeamId, teamId)
-                .eq(userId != null, ScoreAdjustment::getUserId, userId));
+        // 2. 装载手工调整事件；队伍维度天然通过 teams.event_id 限定赛事
+        List<ScoreAdjustment> adjustments = scoreAdjustmentMapper.selectList(
+                Wrappers.<ScoreAdjustment>lambdaQuery()
+                        .eq(teamId != null, ScoreAdjustment::getTeamId, teamId)
+                        .eq(userId != null, ScoreAdjustment::getUserId, userId));
         for (ScoreAdjustment adjustment : adjustments) {
             events.add(new ScoreEventVO(adjustment.getId(),
-                    ScoreEventType.ADMIN_ADJUSTMENT.apiValue(), null, null, null, adjustment.getDelta(),
-                    adjustment.getReason(), adjustment.getAdminId(), adjustment.getCreatedAt()));
+                    ScoreEventType.ADMIN_ADJUSTMENT.apiValue(), null, null, null,
+                    adjustment.getDelta(), adjustment.getReason(), adjustment.getAdminId(),
+                    adjustment.getCreatedAt()));
         }
 
         // 3. 按事件类型过滤
@@ -343,5 +397,41 @@ public class LeaderboardServiceImpl implements LeaderboardService {
             return events.stream().filter(event -> type.equalsIgnoreCase(event.type())).toList();
         }
         return events;
+    }
+
+    /** 批量装载账号。 */
+    private Map<String, User> loadUsers(List<String> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            return Map.of();
+        }
+        return userMapper.selectBatchIds(userIds.stream().distinct().toList()).stream()
+                .collect(Collectors.toMap(User::getId, Function.identity()));
+    }
+
+    /** 批量装载题目。 */
+    private Map<String, Challenge> loadChallenges(List<String> challengeIds) {
+        if (challengeIds == null || challengeIds.isEmpty()) {
+            return Map.of();
+        }
+        return challengeMapper.selectBatchIds(challengeIds.stream().distinct().toList()).stream()
+                .collect(Collectors.toMap(Challenge::getId, Function.identity()));
+    }
+
+    /** 组装后台成员视图。 */
+    private TeamMemberVO toMemberVO(TeamMember membership, User user, Team team) {
+        return new TeamMemberVO(membership.getUserId(), user == null ? null : user.getUsername(),
+                user == null ? null : user.getNickname(),
+                membership.getUserId().equals(team.getCreatedBy()), membership.getJoinedAt());
+    }
+
+    /** 组装后台提交日志。 */
+    private AdminSubmissionLogVO toSubmissionLog(Submission submission, Challenge challenge, User user) {
+        return new AdminSubmissionLogVO(submission.getId(), submission.getUserId(),
+                user == null ? null : user.getUsername(),
+                challenge == null ? null : challenge.getCode(),
+                challenge == null ? null : challenge.getTitle(),
+                submission.getResult().apiValue(), submission.getPointsAwarded(), submission.getSolvePlace(),
+                submission.getSource() == null ? null : submission.getSource().apiValue(),
+                submission.getSubmittedAt());
     }
 }

@@ -77,6 +77,7 @@ public class BootstrapDataInitializer implements ApplicationRunner {
             event.setTimezone(properties.getBootstrap().getEventTimezone());
             event.setStartsAt(TimeUtil.now());
             event.setEndsAt(TimeUtil.now().plus(DEFAULT_EVENT_DURATION));
+            event.setMaxTeamSize(4);
             event.setCreatedAt(TimeUtil.now());
             event.setUpdatedAt(TimeUtil.now());
             eventMapper.insert(event);

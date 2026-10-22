@@ -20,9 +20,9 @@ public interface SubmissionService {
     SubmissionVO getSubmission(String submissionId, UserPrincipal principal);
 
     /** 分页查询本人或本队提交记录。 */
-    PageVO<SubmissionVO> mySubmissions(UserPrincipal principal, String challengeCode, String result,
-                                                      PageQueryDTO query);
+    PageVO<SubmissionVO> mySubmissions(UserPrincipal principal, String eventId, String challengeCode,
+                                       String result, PageQueryDTO query);
 
     /** 个人/队伍解题进度与累计分数。 */
-    MyProgressVO myProgress(UserPrincipal principal);
+    MyProgressVO myProgress(UserPrincipal principal, String eventId);
 }

@@ -39,28 +39,33 @@ public class AdminLeaderboardController {
     @GetMapping("/leaderboard")
     public PageVO<LeaderboardItemVO> leaderboard(
             @RequestParam(required = false, defaultValue = "team") String scope,
+            @RequestParam(required = false) String eventId,
             @RequestParam(required = false) String q,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer pageSize) {
         PageQueryDTO query = PageUtil.normalize(page, pageSize);
-        return leaderboardService.adminLeaderboard(scope, q, query);
+        return leaderboardService.adminLeaderboard(scope, eventId, q, query);
     }
 
-    /** 队伍积分明细与解题时间线。 */
+    /** 队伍积分明细、全部成员与分页提交日志。 */
     @GetMapping("/leaderboard/{teamId}")
-    public TeamDetailVO teamDetail(@PathVariable String teamId) {
-        return leaderboardService.teamDetail(teamId);
+    public TeamDetailVO teamDetail(@PathVariable String teamId,
+                                   @RequestParam(required = false) String eventId,
+                                   @RequestParam(required = false) Integer page,
+                                   @RequestParam(required = false) Integer pageSize) {
+        return leaderboardService.teamDetail(eventId, teamId, PageUtil.normalize(page, pageSize));
     }
 
     /** 查询加分/扣分及题目得分事件。 */
     @GetMapping("/score-events")
     public PageVO<ScoreEventVO> scoreEvents(@RequestParam(required = false) String teamId,
+                                                           @RequestParam(required = false) String eventId,
                                                            @RequestParam(required = false) String userId,
                                                            @RequestParam(required = false) String type,
                                                            @RequestParam(required = false) Integer page,
                                                            @RequestParam(required = false) Integer pageSize) {
         PageQueryDTO query = PageUtil.normalize(page, pageSize);
-        return leaderboardService.scoreEvents(teamId, userId, type, query);
+        return leaderboardService.scoreEvents(eventId, teamId, userId, type, query);
     }
 
     /** 手工调整积分，必须填写原因并落审计。 */

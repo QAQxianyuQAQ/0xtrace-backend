@@ -36,7 +36,7 @@ java -jar target/backend-1.0.0-SNAPSHOT.jar --spring.profiles.active=prod
 > `mvnw` 与 `scripts/*.sh` 均为 Bash 脚本。若直接执行提示 `权限不够`，改用 `bash` 调用即可：
 > `bash mvnw -DskipTests package`、`bash scripts/scan-secrets.sh`；也可先 `chmod +x mvnw scripts/*.sh .githooks/pre-commit`。
 
-数据库建表脚本：MySQL 使用 [`src/main/resources/sql/V1__init_schema.sql`](src/main/resources/sql/V1__init_schema.sql)，测试环境使用 [`src/main/resources/sql/schema-h2.sql`](src/main/resources/sql/schema-h2.sql)（由 `application-test.yml` 自动执行）。
+数据库脚本：新库按顺序执行 [`V1__init_schema.sql`](src/main/resources/sql/V1__init_schema.sql) 与 [`V2__event_scoped_teams.sql`](src/main/resources/sql/V2__event_scoped_teams.sql)；已有库只执行 V2。测试环境使用 [`schema-h2.sql`](src/main/resources/sql/schema-h2.sql)（由 `application-test.yml` 自动执行）。
 
 dev profile 首次启动（`tracequest.bootstrap.enabled=true`）会创建默认管理员 `admin / admin12345` 与一条状态为 `open` 的赛事记录；生产环境必须关闭该开关（启动期密钥体检会强制拦截）并通过运维流程创建账号。
 
@@ -75,6 +75,7 @@ dev profile 首次启动（`tracequest.bootstrap.enabled=true`）会创建默认
 | GET | `/me/progress` | contestant |
 | GET | `/me/submissions` | contestant |
 | GET | `/me/submissions/{submissionId}` | contestant |
+| POST/GET | `/events/{eventId}/teams`、`/events/{eventId}/teams/join`、`/events/{eventId}/teams/me` | contestant（队伍关系仅对单赛事生效） |
 
 赛事、题目、提交与排名
 
@@ -82,7 +83,7 @@ dev profile 首次启动（`tracequest.bootstrap.enabled=true`）会创建默认
 | --- | --- | --- |
 | GET | `/event` | public |
 | GET | `/challenges`、`/challenges/{code}` | public/contestant（不含 `answer`） |
-| GET | `/leaderboard` | public/contestant（登录返回 `isMe`） |
+| GET | `/leaderboard?eventId=...` | public/contestant（仅队伍排名，登录返回 `isMe`） |
 | GET | `/files/{fileId}` | contestant（302 跳转 MinIO 预签名地址） |
 | POST | `/challenges/{code}/submissions` | contestant（支持 `Idempotency-Key`） |
 | POST | `/location-verifications` | contestant（支持 `Idempotency-Key`） |
@@ -93,7 +94,7 @@ dev profile 首次启动（`tracequest.bootstrap.enabled=true`）会创建默认
 | 方法 | 路径 | 权限 |
 | --- | --- | --- |
 | GET | `/admin/dashboard`、`/admin/event`、`/admin/audit-log` | admin |
-| PATCH | `/admin/event` | admin |
+| POST/PATCH | `/admin/event` | admin（创建赛事必须设置 `maxTeamSize`） |
 | GET/POST | `/admin/challenges` | admin |
 | GET/PATCH/DELETE | `/admin/challenges/{code}` | admin |
 | POST | `/admin/challenges/{code}/publish`、`pause`、`resume` | admin |
@@ -107,7 +108,7 @@ dev profile 首次启动（`tracequest.bootstrap.enabled=true`）会创建默认
 | PUT | `/admin/contestants/{userId}/password` | admin |
 | POST | `/admin/contestants/{userId}/disable`、`enable` | admin |
 | POST/GET | `/admin/contestants/import`、`export` | admin（CSV，导出不含密码） |
-| GET | `/admin/leaderboard`、`/admin/leaderboard/{teamId}`、`/admin/score-events` | admin |
+| GET | `/admin/leaderboard`、`/admin/leaderboard/{teamId}`、`/admin/score-events` | admin（`teamId` 详情含全部成员与分页提交日志） |
 | POST | `/admin/score-adjustments` | admin（必须填写原因） |
 
 统一错误响应（与 8.1 一致）：
@@ -149,7 +150,7 @@ controller、service、repository 三层与 dto/vo 一样按功能模块分目�
 
 ## 关键实现说明
 
-- **判题与计分**：答案在数据库中仅保存 AES-GCM 密文；判题由服务端解密并做常量时间比较。首解名次由数据库解题数推导，并由 `solves(subject_key, challenge_id)` 唯一约束兜底并发；同一队伍/个人同题只计一次，重复提交返回 `already_solved` 及首次完成数据。
+- **队伍与计分**：队伍和成员关系都带 `event_id`，同一账号可为不同赛事加入不同队伍；提交时必须属于题目所属赛事的队伍，`solves(subject_key, challenge_id)` 按队伍主体唯一计分，榜单只提供队伍维度。
 - **幂等**：`Idempotency-Key` 请求头由 `IdempotentAspect` 统一处理，命中同键同内容时回放首次响应，同键不同内容返回 `409 IDEMPOTENCY_CONFLICT`；请求体中的 `requestId` 亦可用于重放定位。
 - **并发控制**：`solves` 唯一约束 + 基于 Redis 的分布式锁（`DistributedLockAspect`）串行化同一账号的解题写路径。
 - **限流**：登录、提交、位置核验与后台写操作通过 `RateLimitAspect` 与 Redis 计数器限流，超限返回 `429` 与 `Retry-After`。
@@ -165,10 +166,11 @@ controller、service、repository 三层与 dto/vo 一样按功能模块分目�
 2. 错误响应采用第 8 章定义的 `{error:{...},requestId}` 结构（而非 `AGENTS.md` 第 9 节的 `{code,message,data,traceId}`），因为本次任务以第 8 章契约为准；`requestId` 同时写入 `X-Request-Id` 响应头与日志 MDC。
 3. 集成测试使用 H2（MySQL 兼容模式）而非 Testcontainers：当前构建环境为离线环境，无法拉取测试容器镜像与模块。CI 具备网络后可将 `TraceQuestApiIntegrationTest` 切换为 Testcontainers（MySQL/Redis/MinIO）而无需改动业务代码。
 4. 榜单缓存为「按分页结果的短时 JSON 缓存」（30s TTL + 写路径失效），未使用 Redis 有序集合，以严格保证总分 → 解题数 → 达标时间的三级排序语义。
-5. `POST /admin/contestants` 在 `teamId` 之外额外接受可选 `teamName`（不存在时创建队伍），因为第 8 章未定义队伍维护接口；不传该字段时行为与契约完全一致。
+5. `POST /admin/contestants` 的 `teamId`/`teamName` 均限定到当前赛事；选手自助组队使用 `/api/v1/events/{eventId}/teams`，队伍标识码用于同赛事加入。
 
 ## 部署
 
+- 单机 Docker Compose（Ubuntu 20.04 等）：见 [`DEPLOY.md`](DEPLOY.md)；自带全部中间件用 [`docker-compose.yml`](docker-compose.yml)，复用已有的 MySQL/Redis/MinIO 用 [`docker-compose.app-only.yml`](docker-compose.app-only.yml)，变量模板为 [`.env.deploy.example`](.env.deploy.example)。
 - 镜像：多阶段构建，运行阶段基于 slim JRE 25，非 root 用户（见 [`Dockerfile`](Dockerfile)）。
 - Kubernetes：`k8s/` 下提供 ConfigMap、Secret 示例、Deployment（探针指向 `/api/v1/health`）、Service 与 HPA；镜像地址为 `ghcr.io/qaqxianyuqaq/0xtrace-backend`。
 - 流水线：
@@ -183,7 +185,7 @@ controller、service、repository 三层与 dto/vo 一样按功能模块分目�
 ./mvnw test -Dtest.excluded.groups=none            # 追加集成测试：TraceQuestApiIntegrationTest
 ```
 
-`TraceQuestApiIntegrationTest` 覆盖：管理员建题发布、选手登录答题、首解加分与重复提交幂等、`Idempotency-Key` 冲突、榜单 `isMe`、个人进度、后台总览与审计、位置二维码签发/核验/撤销、账号导入导出与停用后登录失败、401/403 权限边界。
+`TraceQuestApiIntegrationTest` 覆盖：管理员建题发布、赛事内队伍创建/标识码加入/人数上限、跨赛事独立队伍、队伍成员计分与后台提交日志、首解加分与重复提交幂等、`Idempotency-Key` 冲突、榜单 `isMe`、个人进度、后台总览与审计、位置二维码签发/核验/撤销、账号导入导出与停用后登录失败、401/403 权限边界。
 
 ## 推送到 GitHub
 

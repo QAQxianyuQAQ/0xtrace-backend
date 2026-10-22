@@ -29,7 +29,7 @@ public class User {
 
     private AccountStatus status;
 
-    /** 所属队伍主键，允许为空（未组队）。 */
+    /** 兼容旧版账号管理展示的全局队伍字段；赛事计分改用 team_members.event_id。 */
     private String teamId;
 
     /** 后台备注，仅管理端可见。 */

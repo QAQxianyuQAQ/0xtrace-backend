@@ -15,37 +15,43 @@ public interface SolveMapper extends BaseMapper<Solve> {
      * 队伍维度排行榜聚合：总分降序、解题数降序、最后解题时间升序。
      *
      * @param page    分页参数
+     * @param eventId 赛事标识，排名只在单场赛事内计算
      * @param keyword 队伍名称模糊搜索关键字，可为空
      */
     @Select("""
             <script>
-            SELECT base.subject_id AS subjectId,
-                   base.subject_name AS subjectName,
-                   base.solved_count AS solvedCount,
-                   base.score + COALESCE(adj.delta, 0) AS score,
+            SELECT t.id AS subjectId,
+                   t.name AS subjectName,
+                   COALESCE(base.solved_count, 0) AS solvedCount,
+                   COALESCE(base.score, 0) + COALESCE(adj.delta, 0) AS score,
                    base.last_solved_at AS lastSolvedAt
-            FROM (
-                SELECT s.team_id AS subject_id, t.name AS subject_name,
+            FROM teams t
+            LEFT JOIN (
+                SELECT s.team_id AS subject_id,
                        COUNT(*) AS solved_count,
                        SUM(s.base_points + s.bonus_points) AS score,
                        MAX(s.solved_at) AS last_solved_at
                 FROM solves s
-                JOIN teams t ON t.id = s.team_id
-                <if test="keyword != null and keyword != ''">
-                    WHERE LOWER(t.name) LIKE LOWER(CONCAT('%', #{keyword}, '%'))
-                </if>
-                GROUP BY s.team_id, t.name
-            ) base
+                JOIN challenges c ON c.id = s.challenge_id
+                WHERE c.event_id = #{eventId}
+                GROUP BY s.team_id
+            ) base ON base.subject_id = t.id
             LEFT JOIN (
                 SELECT team_id AS subject_id, SUM(delta) AS delta
                 FROM score_adjustments
                 WHERE team_id IS NOT NULL
                 GROUP BY team_id
-            ) adj ON adj.subject_id = base.subject_id
-            ORDER BY score DESC, solvedCount DESC, lastSolvedAt ASC
+            ) adj ON adj.subject_id = t.id
+            WHERE t.event_id = #{eventId}
+            <if test="keyword != null and keyword != ''">
+                AND LOWER(t.name) LIKE LOWER(CONCAT('%', #{keyword}, '%'))
+            </if>
+            ORDER BY score DESC, solvedCount DESC, lastSolvedAt ASC, t.created_at ASC
             </script>
             """)
-    IPage<LeaderboardRowVO> selectTeamLeaderboard(IPage<LeaderboardRowVO> page, @Param("keyword") String keyword);
+    IPage<LeaderboardRowVO> selectTeamLeaderboard(IPage<LeaderboardRowVO> page,
+                                                  @Param("eventId") String eventId,
+                                                  @Param("keyword") String keyword);
 
     /**
      * 个人维度排行榜聚合：仅统计选手角色账号。

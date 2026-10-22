@@ -5,6 +5,7 @@ import com.qaqxianyuqaq.backend.domain.vo.submission.SubmissionResultVO;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.qaqxianyuqaq.backend.domain.entity.Challenge;
 import com.qaqxianyuqaq.backend.domain.entity.Solve;
+import com.qaqxianyuqaq.backend.domain.entity.Team;
 import com.qaqxianyuqaq.backend.domain.enums.SolveSource;
 import com.qaqxianyuqaq.backend.repository.challenge.ChallengeMapper;
 import com.qaqxianyuqaq.backend.repository.submission.SolveMapper;
@@ -12,6 +13,8 @@ import com.qaqxianyuqaq.backend.repository.submission.SubmissionMapper;
 import com.qaqxianyuqaq.backend.security.UserPrincipal;
 import com.qaqxianyuqaq.backend.util.TimeUtil;
 import com.qaqxianyuqaq.backend.service.cache.CacheService;
+import com.qaqxianyuqaq.backend.service.contestant.TeamService;
+import com.qaqxianyuqaq.backend.service.event.EventService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -43,6 +46,12 @@ class ScoringServiceImplTest {
     @Mock
     private CacheService cacheService;
 
+    @Mock
+    private TeamService teamService;
+
+    @Mock
+    private EventService eventService;
+
     @InjectMocks
     private ScoringServiceImpl scoringService;
 
@@ -56,12 +65,17 @@ class ScoringServiceImplTest {
                 "team_1", 0);
         challenge = new Challenge();
         challenge.setId("chal_1");
+        challenge.setEventId("evt_1");
         challenge.setCode("GEO-01");
         challenge.setPoints(400);
         challenge.setBonusFirst(100);
         challenge.setBonusSecond(60);
         challenge.setBonusThird(30);
         challenge.setBonusOther(0);
+        Team team = new Team();
+        team.setId("team_1");
+        team.setEventId("evt_1");
+        when(teamService.requireMembership("evt_1", "usr_1")).thenReturn(team);
     }
 
     @Test

@@ -27,12 +27,14 @@ public class ChallengeController {
 
     /** 只返回已发布题目，并按当前登录态标注解题状态。 */
     @GetMapping
-    public PageVO<ChallengeVO> list(@RequestParam(required = false) String category,
+    public PageVO<ChallengeVO> list(@RequestParam(required = false) String eventId,
+                                                  @RequestParam(required = false) String category,
                                                   @RequestParam(required = false) String difficulty,
                                                   @RequestParam(required = false) Integer page,
                                                   @RequestParam(required = false) Integer pageSize) {
         PageQueryDTO query = PageUtil.normalize(page, pageSize);
-        return challengeService.listPublic(category, difficulty, SecurityUtils.currentPrincipalOrNull(), query);
+        return challengeService.listPublic(eventId, category, difficulty,
+                SecurityUtils.currentPrincipalOrNull(), query);
     }
 
     /** 题目详情，含附件元数据与本人解题状态。 */

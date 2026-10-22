@@ -8,6 +8,7 @@ import com.qaqxianyuqaq.backend.aspect.DistributedLock;
 import com.qaqxianyuqaq.backend.domain.entity.Challenge;
 import com.qaqxianyuqaq.backend.domain.entity.Solve;
 import com.qaqxianyuqaq.backend.domain.entity.Submission;
+import com.qaqxianyuqaq.backend.domain.entity.Team;
 import com.qaqxianyuqaq.backend.domain.enums.ChallengeStatus;
 import com.qaqxianyuqaq.backend.domain.enums.CompletionType;
 import com.qaqxianyuqaq.backend.domain.enums.SolveSource;
@@ -17,6 +18,8 @@ import com.qaqxianyuqaq.backend.repository.submission.SolveMapper;
 import com.qaqxianyuqaq.backend.repository.submission.SubmissionMapper;
 import com.qaqxianyuqaq.backend.security.UserPrincipal;
 import com.qaqxianyuqaq.backend.service.cache.CacheService;
+import com.qaqxianyuqaq.backend.service.contestant.TeamService;
+import com.qaqxianyuqaq.backend.service.event.EventService;
 import com.qaqxianyuqaq.backend.service.submission.ScoringService;
 import com.qaqxianyuqaq.backend.util.CacheKeys;
 import com.qaqxianyuqaq.backend.util.DigestUtil;
@@ -42,12 +45,19 @@ public class ScoringServiceImpl implements ScoringService {
 
     private final CacheService cacheService;
 
+    private final TeamService teamService;
+
+    private final EventService eventService;
+
     public ScoringServiceImpl(SolveMapper solveMapper, SubmissionMapper submissionMapper,
-                              ChallengeMapper challengeMapper, CacheService cacheService) {
+                              ChallengeMapper challengeMapper, CacheService cacheService,
+                              TeamService teamService, EventService eventService) {
         this.solveMapper = solveMapper;
         this.submissionMapper = submissionMapper;
         this.challengeMapper = challengeMapper;
         this.cacheService = cacheService;
+        this.teamService = teamService;
+        this.eventService = eventService;
     }
 
     @Override
@@ -55,33 +65,42 @@ public class ScoringServiceImpl implements ScoringService {
         if (viewer == null) {
             return "unsolved";
         }
-        // 有队伍时以队伍维度判定，否则以个人维度判定
-        Solve solve = findSolve(subjectKeyOf(viewer), challenge.getId());
+        // 1. 只按题目所属赛事中的队伍判定完成状态
+        Team team = teamService.findMembership(eventIdOf(challenge), viewer.userId());
+        if (team == null) {
+            return "unsolved";
+        }
+
+        // 2. 查询该队伍在当前题目的唯一解题记录
+        Solve solve = findSolve(team.getId(), challenge.getId());
         return solve == null ? "unsolved" : "solved";
     }
 
     @Override
     @Transactional
-    @DistributedLock(key = "#principal.userId() + ':' + #challenge.id")
+    @DistributedLock(key = "#challenge.id")
     public SubmissionResultVO award(UserPrincipal principal, Challenge challenge, SolveSource source,
                                                    String answerText, String requestId, boolean correct) {
-        // 1. 计算统计主体键：有队伍按队伍，无队伍按个人
-        String subjectKey = subjectKeyOf(principal);
+        // 1. 解析题目所属赛事并要求选手已经加入该赛事队伍
+        String eventId = eventIdOf(challenge);
+        Team team = teamService.requireMembership(eventId, principal.userId());
+        String subjectKey = team.getId();
 
         // 2. 已完成题目直接返回首次完成数据，不重复计分、不新增解题记录
         Solve existing = findSolve(subjectKey, challenge.getId());
         if (existing != null) {
-            return alreadySolvedResponse(principal, challenge, existing);
+            return alreadySolvedResponse(challenge, existing, eventId, team.getId());
         }
 
         // 3. 无论对错都留存提交记录，便于赛事复盘与限次策略
-        Submission submission = insertSubmission(principal, challenge, source, answerText, requestId, correct);
+        Submission submission = insertSubmission(principal, challenge, team, source, answerText,
+                requestId, correct);
 
         // 4. 答案错误时直接返回错误结果，不产生积分
         if (!correct) {
             return new SubmissionResultVO(submission.getId(), challenge.getCode(),
                     SubmissionResult.INCORRECT.apiValue(), null, null, 0, 0, 0, null,
-                    progress(principal), source.apiValue());
+                    progress(eventId, team.getId()), source.apiValue());
         }
 
         // 5. 以数据库既有解题数推导名次，并发场景由唯一约束兜底
@@ -95,7 +114,7 @@ public class ScoringServiceImpl implements ScoringService {
         Solve solve = new Solve();
         solve.setId(IdGenerator.next("solve"));
         solve.setUserId(principal.userId());
-        solve.setTeamId(principal.teamId());
+        solve.setTeamId(team.getId());
         solve.setSubjectKey(subjectKey);
         solve.setChallengeId(challenge.getId());
         solve.setSubmissionId(submission.getId());
@@ -110,7 +129,7 @@ public class ScoringServiceImpl implements ScoringService {
         } catch (DuplicateKeyException exception) {
             Solve concurrent = findSolve(subjectKey, challenge.getId());
             if (concurrent != null) {
-                return alreadySolvedResponse(principal, challenge, concurrent);
+            return alreadySolvedResponse(challenge, concurrent, eventId, team.getId());
             }
             throw exception;
         }
@@ -126,7 +145,8 @@ public class ScoringServiceImpl implements ScoringService {
         // 9. 返回首解结果，客户端据此展示恭喜完成与实际得分
         return new SubmissionResultVO(submission.getId(), challenge.getCode(),
                 SubmissionResult.CORRECT.apiValue(), CompletionType.FIRST_SOLVE.apiValue(), solve.getSolvedAt(),
-                basePoints, bonusPoints, basePoints + bonusPoints, place, progress(principal), source.apiValue());
+                basePoints, bonusPoints, basePoints + bonusPoints, place, progress(eventId, team.getId()),
+                source.apiValue());
     }
 
     /** 按名次计算额外加分。 */
@@ -145,12 +165,13 @@ public class ScoringServiceImpl implements ScoringService {
     }
 
     /** 组装尚未完成题目的提交记录。 */
-    private Submission insertSubmission(UserPrincipal principal, Challenge challenge, SolveSource source,
-                                        String answerText, String requestId, boolean correct) {
+    private Submission insertSubmission(UserPrincipal principal, Challenge challenge, Team team,
+                                        SolveSource source, String answerText, String requestId,
+                                        boolean correct) {
         Submission submission = new Submission();
         submission.setId(IdGenerator.next("sub"));
         submission.setUserId(principal.userId());
-        submission.setTeamId(principal.teamId());
+        submission.setTeamId(team.getId());
         submission.setChallengeId(challenge.getId());
         submission.setAnswerDigest(DigestUtil.sha256Hex(answerText == null ? "" : answerText));
         submission.setResult(correct ? SubmissionResult.CORRECT : SubmissionResult.INCORRECT);
@@ -163,21 +184,22 @@ public class ScoringServiceImpl implements ScoringService {
     }
 
     /** 组装已完成题目的幂等响应。 */
-    private SubmissionResultVO alreadySolvedResponse(UserPrincipal principal, Challenge challenge,
-                                                                   Solve solve) {
+    private SubmissionResultVO alreadySolvedResponse(Challenge challenge, Solve solve,
+                                                     String eventId, String teamId) {
         int points = nullToZero(solve.getBasePoints()) + nullToZero(solve.getBonusPoints());
         return new SubmissionResultVO(solve.getSubmissionId(), challenge.getCode(),
                 SubmissionResult.CORRECT.apiValue(), CompletionType.ALREADY_SOLVED.apiValue(), solve.getSolvedAt(),
                 solve.getBasePoints(), solve.getBonusPoints(), points, solve.getSolvePlace(),
-                progress(principal), solve.getSource() == null ? null : solve.getSource().apiValue());
+                progress(eventId, teamId), solve.getSource() == null ? null : solve.getSource().apiValue());
     }
 
-    /** 统计当前主体与全站的解题进度。 */
-    private ProgressVO progress(UserPrincipal principal) {
+    /** 统计指定赛事队伍与赛事题目的解题进度。 */
+    private ProgressVO progress(String eventId, String teamId) {
         long solved = solveMapper.selectCount(Wrappers.<Solve>lambdaQuery()
-                .eq(Solve::getSubjectKey, subjectKeyOf(principal)));
+                .eq(Solve::getSubjectKey, teamId));
         long total = challengeMapper.selectCount(Wrappers.<Challenge>lambdaQuery()
-                .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED));
+                .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED)
+                .eq(Challenge::getEventId, eventId));
         return new ProgressVO((int) solved, (int) total);
     }
 
@@ -188,8 +210,8 @@ public class ScoringServiceImpl implements ScoringService {
                 .eq(Solve::getChallengeId, challengeId));
     }
 
-    /** 计算统计主体键。 */
-    private String subjectKeyOf(UserPrincipal principal) {
-        return principal.teamId() == null ? principal.userId() : principal.teamId();
+    /** 解析题目所属赛事；历史题目缺少赛事字段时回落到当前赛事。 */
+    private String eventIdOf(Challenge challenge) {
+        return challenge.getEventId() == null ? eventService.requireCurrent().getId() : challenge.getEventId();
     }
 }

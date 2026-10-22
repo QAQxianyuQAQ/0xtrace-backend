@@ -14,16 +14,17 @@ import com.qaqxianyuqaq.backend.security.UserPrincipal;
 public interface LeaderboardService {
 
     /** 公开榜单，登录后返回 isMe 标记。 */
-    LeaderboardVO publicLeaderboard(String scope, UserPrincipal viewer, PageQueryDTO query);
+    LeaderboardVO publicLeaderboard(String scope, String eventId, UserPrincipal viewer, PageQueryDTO query);
 
     /** 后台榜单，支持关键字筛选。 */
-    PageVO<LeaderboardItemVO> adminLeaderboard(String scope, String q, PageQueryDTO query);
+    PageVO<LeaderboardItemVO> adminLeaderboard(String scope, String eventId, String q, PageQueryDTO query);
 
-    /** 队伍积分明细与解题时间线。 */
-    TeamDetailVO teamDetail(String teamId);
+    /** 队伍积分明细、全部成员与分页提交日志。 */
+    TeamDetailVO teamDetail(String eventId, String teamId, PageQueryDTO query);
 
     /** 查询题目得分与手工调整事件。 */
-    PageVO<ScoreEventVO> scoreEvents(String teamId, String userId, String type, PageQueryDTO query);
+    PageVO<ScoreEventVO> scoreEvents(String eventId, String teamId, String userId,
+                                     String type, PageQueryDTO query);
 
     /** 手工调整积分，必须填写原因并落审计。 */
     ScoreEventVO adjustScore(ScoreAdjustmentDTO request, UserPrincipal operator);

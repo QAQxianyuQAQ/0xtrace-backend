@@ -1,7 +1,7 @@
 # TraceQuest 接口与数据契约文档
 
-> 文档版本：1.3  
-> 盘点日期：2026-10-02  
+> 文档版本：1.5
+> 盘点日期：2026-10-22
 > 适用代码：当前仓库 `tracequest-app`（Vue + Vite 前端、Node.js 轻量 API）
 
 ## 1. 当前实现范围
@@ -340,17 +340,20 @@ TRACEQUEST|LOCATION|{CODE}|{URL_SAFE_RANDOM_TOKEN}
 | `POST` | `/auth/logout` | authenticated | **目标接口**；当前对应 `/api/auth/logout` |
 | `GET` | `/auth/me` | authenticated | 目标接口；当前对应 `/api/auth/session` |
 | `PATCH` | `/me/profile` | contestant | 更新昵称、头像 URL |
-| `GET` | `/me/progress` | contestant | 个人/队伍解题进度、累计分数 |
-| `GET` | `/me/submissions` | contestant | 当前用户或队伍提交记录，支持分页/筛选 |
+| `GET` | `/me/progress?eventId=...` | contestant | 当前赛事队伍解题进度、累计分数 |
+| `GET` | `/me/submissions?eventId=...` | contestant | 当前赛事个人/队伍提交记录，支持分页/筛选 |
 
 #### 赛事与公开数据
 
 | Method | Path | 权限 | 说明 |
 |---|---|---|---|
-| `GET` | `/event` | public | 赛事名称、公开状态、开始/结束时间、时区 |
-| `GET` | `/challenges` | public/contestant | 只返回已发布题目，不得带标准答案或二维码密钥 |
+| `GET` | `/event` | public | 当前赛事名称、状态、时间与队伍人数上限 |
+| `GET` | `/challenges?eventId=...` | public/contestant | 只返回指定赛事的已发布题目，不得带标准答案或二维码密钥 |
 | `GET` | `/challenges/{code}` | public/contestant | 题目详情、附件元数据、选手可见的解题状态 |
-| `GET` | `/leaderboard` | public/contestant | 排名列表与赛事统计 |
+| `GET` | `/leaderboard?eventId=...` | public/contestant | 指定赛事的队伍排名与统计；`scope` 仅支持 `team` |
+| `GET` | `/events/{eventId}/teams/me` | contestant | 查看当前选手在该赛事的队伍及唯一标识码 |
+| `POST` | `/events/{eventId}/teams` | contestant | 在该赛事创建队伍，创建者自动入队并取得标识码 |
+| `POST` | `/events/{eventId}/teams/join` | contestant | 使用 `code` 加入该赛事队伍；每个赛事每人只能加入一队 |
 | `GET` | `/files/{fileId}` | contestant | 鉴权后的附件下载或短效重定向 |
 
 #### 提交、计分与位置核验
@@ -367,7 +370,8 @@ TRACEQUEST|LOCATION|{CODE}|{URL_SAFE_RANDOM_TOKEN}
 |---|---|---|---|
 | `GET` | `/admin/dashboard` | admin | 总览卡片：题目数、上线题目数、账号数、启用账号数、近期活动摘要 |
 | `GET` | `/admin/event` | admin | 获取完整赛事配置 |
-| `PATCH` | `/admin/event` | admin | 更新赛事名称、状态、时区、起止时间 |
+| `POST` | `/admin/event` | admin | 创建赛事；`maxTeamSize` 必填且范围为 1–100 |
+| `PATCH` | `/admin/event` | admin | 更新赛事名称、状态、时区、起止时间与队伍人数上限 |
 | `GET` | `/admin/audit-log` | admin | 分页检索后台操作审计记录 |
 
 #### 题目后台管理（列表、创建、编辑、删除、发布）
@@ -456,10 +460,10 @@ TRACEQUEST|LOCATION|{CODE}|{URL_SAFE_RANDOM_TOKEN}
 
 | Method | Path | 权限 | 说明 |
 |---|---|---|---|
-| `GET` | `/leaderboard` | public/contestant | 分页排名；支持按队伍或个人模式、必要时限定赛季 |
-| `GET` | `/admin/leaderboard` | admin | 查看后台完整排行榜、筛选队伍/个人、导出数据 |
-| `GET` | `/admin/leaderboard/{teamId}` | admin | 查看队伍积分明细和解题时间线 |
-| `GET` | `/admin/score-events` | admin | 查询加分/扣分及题目得分事件 |
+| `GET` | `/leaderboard` | public/contestant | 按 `eventId` 分页返回队伍排名 |
+| `GET` | `/admin/leaderboard` | admin | 查看指定赛事全部队伍（含尚未得分的队伍）并按名称筛选 |
+| `GET` | `/admin/leaderboard/{teamId}` | admin | 查看队伍积分、全部成员及分页提交日志，支持 `eventId/page/pageSize` |
+| `GET` | `/admin/score-events` | admin | 查询指定赛事队伍或账号的得分事件 |
 | `POST` | `/admin/score-adjustments` | admin | 赛事规则允许时手工调整积分，必须填写原因并落审计 |
 
 公开榜单建议响应：
@@ -498,10 +502,31 @@ TRACEQUEST|LOCATION|{CODE}|{URL_SAFE_RANDOM_TOKEN}
 **赛事配置** `PATCH /api/v1/admin/event`：
 
 ```json
-{"name":"TraceQuest Season 01","status":"open","timezone":"Asia/Shanghai","startsAt":"2026-10-01T09:00:00+08:00","endsAt":"2026-10-01T18:00:00+08:00"}
+{"name":"TraceQuest Season 01","status":"open","timezone":"Asia/Shanghai","startsAt":"2026-10-01T09:00:00+08:00","endsAt":"2026-10-01T18:00:00+08:00","maxTeamSize":4}
 ```
 
 响应返回规范化后的完整事件对象；开始时间必须早于结束时间。状态转换建议限制为 `setup → open → paused → open → closed`，具体按赛事管理策略开放。
+
+**创建赛事** `POST /api/v1/admin/event` 使用相同字段，`maxTeamSize` 必填，新赛事默认状态为 `setup`。缩小已有赛事的队伍上限时，如果低于任何现有队伍成员数，服务端返回 `409`。
+
+**创建/加入赛事队伍**：
+
+```json
+{"name":"North Signal"}
+```
+
+```json
+{"code":"TQ-7K9M2Q4XW8"}
+```
+
+创建成功后返回 `201`，两个接口均返回：
+
+```json
+{"id":"team_01","eventId":"evt_01","name":"North Signal","joinCode":"TQ-7K9M2Q4XW8",
+ "captain":true,"memberCount":1,"maxMembers":4}
+```
+
+标识码在同一赛事内用于加入，同一账号可在不同赛事加入不同队伍；超员、重复加入或跨赛事使用标识码会被拒绝。
 
 **题目管理** `POST /api/v1/admin/challenges` 或 `PATCH /api/v1/admin/challenges/{code}` 请求：
 
@@ -554,13 +579,24 @@ TRACEQUEST|LOCATION|{CODE}|{URL_SAFE_RANDOM_TOKEN}
 
 ### 8.2.2 排名查询/后台积分明细样例
 
-`GET /api/v1/leaderboard?scope=team&page=1&pageSize=50` 支持 `scope=team|individual`。匿名公开时可隐藏账号标识；登录后可返回 `isMe`，不得返回个人隐私字段。
+`GET /api/v1/leaderboard?eventId=evt_01&scope=team&page=1&pageSize=50` 只支持 `scope=team`。匿名公开时可隐藏账号标识；登录后可返回 `isMe`，不得返回个人隐私字段。
 
 `GET /api/v1/admin/leaderboard/team_01` 可返回积分分解：
 
 ```json
 {
   "team":{"id":"team_01","name":"North Signal","rank":3,"score":3150,"solvedCount":8},
+  "members":[
+    {"userId":"usr_01","username":"field_129","nickname":"North","captain":true,"joinedAt":"2026-10-01T06:10:00Z"}
+  ],
+  "submissionLogs":{
+    "items":[
+      {"submissionId":"sub_01","userId":"usr_01","username":"field_129","challengeCode":"GEO-01",
+       "challengeTitle":"折射场","result":"correct","pointsAwarded":500,"solvePlace":1,
+       "source":"answer","submittedAt":"2026-10-01T06:24:36Z"}
+    ],
+    "pagination":{"page":1,"pageSize":20,"total":1,"totalPages":1}
+  },
   "scoreEvents":[
     {"id":"score_01","type":"challenge_solve","challengeCode":"GEO-01","basePoints":400,"bonusPoints":100,"delta":500,"awardedAt":"2026-10-01T06:24:36Z"},
     {"id":"score_02","type":"admin_adjustment","delta":-50,"reason":"赛事裁定","actor":"admin","awardedAt":"2026-10-01T06:25:00Z"}
@@ -606,7 +642,7 @@ TRACEQUEST|LOCATION|{CODE}|{URL_SAFE_RANDOM_TOKEN}
 }
 ```
 
-`result` 为 `correct` / `incorrect`。成功首解响应 `completion` 为 `first_solve`；同一队伍或用户、同一题再次正确提交应返回 `result: "correct"`、`completion: "already_solved"`，并回传首次完成时保存的 `solvedAt`、`basePoints`、`bonusAwarded`、`pointsAwarded`、`solvePlace`，但不得再次发奖或创建第二条有效解题记录。同一 `Idempotency-Key` 重放也必须返回原结果，不重复计分。客户端以此结果显示“恭喜完成”、该选手（队伍）本题实际获得分数和解题排名；若题目已完成，应隐藏再次提交入口。错误答案是否入库、是否限次由赛事策略决定。
+`result` 为 `correct` / `incorrect`。成功首解响应 `completion` 为 `first_solve`；同一赛事队伍、同一题再次正确提交应返回 `result: "correct"`、`completion: "already_solved"`，并回传首次完成时保存的 `solvedAt`、`basePoints`、`bonusAwarded`、`pointsAwarded`、`solvePlace`，但不得再次发奖或创建第二条有效解题记录。未加入题目所属赛事队伍的账号不能提交。同一 `Idempotency-Key` 重放也必须返回原结果，不重复计分。客户端以此结果显示“恭喜完成”、该队伍本题实际获得分数和解题排名；若题目已完成，应隐藏再次提交入口。错误答案是否入库、是否限次由赛事策略决定。
 
 推荐响应语义：
 
@@ -659,9 +695,9 @@ Idempotency-Key: <uuid>
 为完整支持上述接口，建议至少建立以下实体（字段类型按实际数据库调整）：
 
 - `users`：`id, username, password_hash, role, status, created_at, last_login_at`
-- `teams`：`id, name, created_at`；如个人赛则可选
-- `team_members`：`team_id, user_id, joined_at`
-- `events`：`id, name, status, timezone, starts_at, ends_at`
+- `teams`：`id, event_id, name, join_code, created_by, created_at`；唯一约束为 `(event_id, name)` 与 `join_code`
+- `team_members`：`id, event_id, team_id, user_id, joined_at`；唯一约束为 `(event_id, user_id)`
+- `events`：`id, name, status, timezone, starts_at, ends_at, max_team_size`
 - `challenges`：`id, event_id, code, title, category, difficulty, points, bonuses_json, description, answer_secret, status, version, published_at`
 - `challenge_files`：`id, challenge_id, storage_key, original_name, size, content_type, created_at`
 - `submissions`：`id, user_id, team_id, challenge_id, answer_digest_or_encrypted, result, points_awarded, submitted_at, request_id`
@@ -674,7 +710,7 @@ Idempotency-Key: <uuid>
 
 1. 增加后端服务与数据库；把题目答案从前端 bundle/localStorage 移除。
 2. 实现密码哈希（Argon2id/bcrypt）、安全会话 Cookie（HttpOnly、Secure、SameSite）或合适的短期令牌方案；管理员每个请求都在服务端鉴权。
-3. 服务器端按队伍/选手持久化解题记录，并在事务中执行判题、首解排名和计分。
+3. 服务器端按赛事内队伍持久化解题记录，并在事务中执行判题、首解排名和计分。
 4. 二维码仅提交随机凭证，服务端验证题目状态、过期/撤销/重放策略，成功后幂等发奖。
 5. 文件与封面改为服务端上传或对象存储；附件下载检查赛事权限，限制大小、类型并生成安全文件名。
 6. 对登录、答案提交、二维码验证添加速率限制、审计与异常监测。
@@ -691,6 +727,7 @@ Idempotency-Key: <uuid>
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 1.5 | 2026-10-22 | 赛事队伍改为赛事内作用域，新增赛事创建队伍人数上限、选手建房/标识码入队、仅队伍排名，以及后台队伍成员与提交日志接口。 |
 | 1.4 | 2026-10-08 | 第 8 章 `/api/v1` 契约由 Spring Boot 后端（Java 25、MyBatis-Plus、MinIO、Redis）实现：新增认证、赛事、题目、提交计分、位置核验、榜单、账号管理与审计接口及统一错误结构；记录二维码图片接口返回 501 等已知差异。 |
 | 1.3 | 2026-10-02 | 记录题目完成后详情页的得分/排名/恭喜结果展示与本地重复提交不重复计分；明确该能力当前仍属前端模拟，并补充未来服务端答案提交的幂等响应契约及文档同步约定。 |
 | 1.2 | 2026-10-02 | 盘点认证与图寻二维码服务端接口、请求/响应、安全边界及未实现能力。 |

@@ -151,8 +151,9 @@ public class LocationServiceImpl implements LocationService {
             throw new ConflictException(ErrorCode.CHALLENGE_NOT_ANSWERABLE, "题目当前不可进行现场核验");
         }
 
-        // 5. 校验赛事处于开放状态
-        EventConfig event = eventService.requireCurrent();
+        // 5. 校验题目所属赛事处于开放状态
+        EventConfig event = challenge.getEventId() == null
+                ? eventService.requireCurrent() : eventService.requireById(challenge.getEventId());
         if (event.getStatus() != EventStatus.OPEN) {
             throw new ConflictException(ErrorCode.SUBMISSION_CLOSED, "赛事当前不可作答");
         }

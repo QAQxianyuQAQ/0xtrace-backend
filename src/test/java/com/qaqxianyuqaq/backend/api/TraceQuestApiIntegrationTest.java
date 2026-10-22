@@ -12,6 +12,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -241,6 +242,129 @@ class TraceQuestApiIntegrationTest {
                         .content(json(Map.of("answer", "另一个答案", "requestId", "answer-2"))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("IDEMPOTENCY_CONFLICT"));
+    }
+
+    @Test
+    @Transactional
+    @DisplayName("赛事内创建/加入队伍、人数上限与成员提交日志")
+    void shouldManageEventScopedTeamsAndSubmissionLogs() throws Exception {
+        String adminSession = login("admin", "admin12345");
+
+        // 1. 创建赛事时必须指定队伍人数上限
+        MvcResult createdEvent = mockMvc.perform(post("/api/v1/admin/event")
+                        .cookie(sessionCookie(adminSession))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", "Team Cup",
+                                "timezone", "Asia/Shanghai",
+                                "startsAt", "2026-10-22T09:00:00+08:00",
+                                "endsAt", "2026-10-22T18:00:00+08:00",
+                                "maxTeamSize", 2))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("Team Cup"))
+                .andExpect(jsonPath("$.status").value("setup"))
+                .andExpect(jsonPath("$.maxTeamSize").value(2))
+                .andReturn();
+        String eventId = read(createdEvent, "$.id");
+
+        // 2. 创建三名无队伍选手，前两名将加入同一队伍
+        for (String username : new String[]{"team_captain", "team_member", "team_outsider"}) {
+            mockMvc.perform(post("/api/v1/admin/contestants")
+                            .cookie(sessionCookie(adminSession))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json(Map.of("username", username, "password", "secret123"))))
+                    .andExpect(status().isCreated());
+        }
+        String captainSession = login("team_captain", "secret123");
+        String memberSession = login("team_member", "secret123");
+        String outsiderSession = login("team_outsider", "secret123");
+
+        // 3. 队长创建队伍并获得唯一标识码
+        MvcResult createdTeam = mockMvc.perform(post("/api/v1/events/" + eventId + "/teams")
+                        .cookie(sessionCookie(captainSession))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", "Team Alpha"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.captain").value(true))
+                .andExpect(jsonPath("$.memberCount").value(1))
+                .andExpect(jsonPath("$.maxMembers").value(2))
+                .andReturn();
+        String teamId = read(createdTeam, "$.id");
+        String joinCode = read(createdTeam, "$.joinCode");
+
+        // 4. 第二名选手用标识码加入，第三名因人数上限被拒绝
+        mockMvc.perform(post("/api/v1/events/" + eventId + "/teams/join")
+                        .cookie(sessionCookie(memberSession))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("code", joinCode))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(teamId))
+                .andExpect(jsonPath("$.captain").value(false))
+                .andExpect(jsonPath("$.memberCount").value(2));
+        mockMvc.perform(post("/api/v1/events/" + eventId + "/teams/join")
+                        .cookie(sessionCookie(outsiderSession))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("code", joinCode))))
+                .andExpect(status().isConflict());
+
+        // 5. 开放赛事后由队伍成员提交并确认按队伍计分
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/api/v1/admin/event")
+                        .cookie(sessionCookie(adminSession))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("status", "open"))))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/admin/challenges")
+                        .cookie(sessionCookie(adminSession))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(challengePayload("TEAM-01", "队伍协作题", "CTF", 300))))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/v1/admin/challenges/TEAM-01/publish")
+                        .cookie(sessionCookie(adminSession)))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/challenges/TEAM-01/submissions")
+                        .cookie(sessionCookie(memberSession))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("answer", "flag{refraction}", "requestId", "team-solve-1"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value("correct"))
+                .andExpect(jsonPath("$.pointsAwarded").value(400));
+
+        mockMvc.perform(get("/api/v1/leaderboard")
+                        .param("scope", "team")
+                        .param("eventId", eventId)
+                        .cookie(sessionCookie(memberSession)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[?(@.teamName == 'Team Alpha')].score").value(hasItem(400)))
+                .andExpect(jsonPath("$.items[?(@.teamName == 'Team Alpha')].isMe").value(hasItem(true)));
+
+        // 6. 后台队伍详情返回全部成员及对应提交日志
+        mockMvc.perform(get("/api/v1/admin/leaderboard/" + teamId)
+                        .param("eventId", eventId)
+                        .cookie(sessionCookie(adminSession)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.team.name").value("Team Alpha"))
+                .andExpect(jsonPath("$.members.length()").value(2))
+                .andExpect(jsonPath("$.members[*].username").value(hasItem("team_captain")))
+                .andExpect(jsonPath("$.members[*].username").value(hasItem("team_member")))
+                .andExpect(jsonPath("$.submissionLogs.items[0].username").value("team_member"))
+                .andExpect(jsonPath("$.submissionLogs.items[0].challengeCode").value("TEAM-01"));
+
+        // 7. 同一选手在另一赛事中可以创建完全独立的队伍
+        MvcResult otherEvent = mockMvc.perform(post("/api/v1/admin/event")
+                        .cookie(sessionCookie(adminSession))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", "Team Cup 2",
+                                "timezone", "Asia/Shanghai", "maxTeamSize", 3))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String otherEventId = read(otherEvent, "$.id");
+        mockMvc.perform(post("/api/v1/events/" + otherEventId + "/teams")
+                        .cookie(sessionCookie(captainSession))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", "Second Event Team"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.eventId").value(otherEventId))
+                .andExpect(jsonPath("$.joinCode").isNotEmpty());
     }
 
     @Test

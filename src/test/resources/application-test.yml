@@ -42,6 +42,9 @@ tracequest:
     admin-username: admin
     admin-password: admin12345
     event-name: TraceQuest Test Event
+  rate-limit:
+    # 集成测试在同一分钟内反复登录多个角色，提高测试环境阈值避免互相干扰
+    login-per-minute: 100
 
 logging:
   level:

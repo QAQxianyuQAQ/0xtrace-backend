@@ -44,19 +44,21 @@ public class MeController {
 
     /** 个人/队伍解题进度与累计分数。 */
     @GetMapping("/progress")
-    public MyProgressVO progress(@AuthenticationPrincipal UserPrincipal principal) {
-        return submissionService.myProgress(principal);
+    public MyProgressVO progress(@AuthenticationPrincipal UserPrincipal principal,
+                                 @RequestParam(required = false) String eventId) {
+        return submissionService.myProgress(principal, eventId);
     }
 
     /** 分页查询本人或本队提交记录。 */
     @GetMapping("/submissions")
     public PageVO<SubmissionVO> submissions(@AuthenticationPrincipal UserPrincipal principal,
+                                                           @RequestParam(required = false) String eventId,
                                                            @RequestParam(required = false) String challengeCode,
                                                            @RequestParam(required = false) String result,
                                                            @RequestParam(required = false) Integer page,
                                                            @RequestParam(required = false) Integer pageSize) {
         PageQueryDTO query = PageUtil.normalize(page, pageSize);
-        return submissionService.mySubmissions(principal, challengeCode, result, query);
+        return submissionService.mySubmissions(principal, eventId, challengeCode, result, query);
     }
 
     /** 查询单条提交结果。 */

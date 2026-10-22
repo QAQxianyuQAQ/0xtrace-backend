@@ -15,6 +15,7 @@ import com.qaqxianyuqaq.backend.domain.entity.Challenge;
 import com.qaqxianyuqaq.backend.domain.entity.EventConfig;
 import com.qaqxianyuqaq.backend.domain.entity.Solve;
 import com.qaqxianyuqaq.backend.domain.entity.Submission;
+import com.qaqxianyuqaq.backend.domain.entity.Team;
 import com.qaqxianyuqaq.backend.domain.enums.ChallengeStatus;
 import com.qaqxianyuqaq.backend.domain.enums.EventStatus;
 import com.qaqxianyuqaq.backend.domain.enums.SolveSource;
@@ -99,8 +100,8 @@ public class SubmissionServiceImpl implements SubmissionService {
         Challenge challenge = challengeService.requireByCode(code);
         assertAnswerable(challenge);
 
-        // 3. 校验赛事处于开放状态
-        assertEventOpen();
+        // 3. 校验题目所属赛事处于开放状态
+        assertEventOpen(challenge);
 
         // 4. 同一 requestId 重放时返回既有提交结果，避免重复计分
         SubmissionResultVO replayed = replayByRequestId(request, principal, challenge);
@@ -133,31 +134,47 @@ public class SubmissionServiceImpl implements SubmissionService {
     }
 
     @Override
-    public PageVO<SubmissionVO> mySubmissions(UserPrincipal principal, String challengeCode,
-                                                             String result, PageQueryDTO query) {
-        // 1. 组装本人/本队过滤条件
+    public PageVO<SubmissionVO> mySubmissions(UserPrincipal principal, String eventId,
+                                              String challengeCode, String result, PageQueryDTO query) {
+        // 1. 解析指定赛事并读取选手在该赛事中的队伍
+        EventConfig event = eventId == null || eventId.isBlank()
+                ? eventService.requireCurrent() : eventService.requireById(eventId);
+        Team team = teamService.findMembership(event.getId(), principal.userId());
+
+        // 2. 组装本人在该赛事的历史提交与当前队伍提交过滤条件
         var wrapper = Wrappers.<Submission>lambdaQuery()
                 .and(condition -> condition.eq(Submission::getUserId, principal.userId())
-                        .or(principal.teamId() != null, part -> part.eq(Submission::getTeamId, principal.teamId())))
+                        .or(team != null, part -> part.eq(Submission::getTeamId,
+                                team == null ? null : team.getId())))
                 .orderByDesc(Submission::getSubmittedAt);
 
-        // 2. 题目编号过滤：编号不存在时直接返回空页
+        // 3. 题目编号过滤：编号不存在或不属于该赛事时直接返回空页
         if (challengeCode != null && !challengeCode.isBlank()) {
             Challenge challenge = challengeMapper.selectOne(Wrappers.<Challenge>lambdaQuery()
-                    .eq(Challenge::getCode, challengeCode));
+                    .eq(Challenge::getCode, challengeCode)
+                    .eq(Challenge::getEventId, event.getId()));
             if (challenge == null) {
                 return PageUtil.toPage(new Page<>(query.page(), query.pageSize()), List.of());
             }
             wrapper.eq(Submission::getChallengeId, challenge.getId());
+        } else {
+            // 4. 默认只返回指定赛事题目对应的提交记录
+            List<String> eventChallengeIds = challengeMapper.selectList(Wrappers.<Challenge>lambdaQuery()
+                            .eq(Challenge::getEventId, event.getId()))
+                    .stream().map(Challenge::getId).toList();
+            if (eventChallengeIds.isEmpty()) {
+                return PageUtil.toPage(new Page<>(query.page(), query.pageSize()), List.of());
+            }
+            wrapper.in(Submission::getChallengeId, eventChallengeIds);
         }
 
-        // 3. 结果过滤（correct/incorrect）
+        // 5. 结果过滤（correct/incorrect）
         if (result != null && !result.isBlank()) {
             wrapper.eq(Submission::getResult,
                     "correct".equalsIgnoreCase(result) ? SubmissionResult.CORRECT : SubmissionResult.INCORRECT);
         }
 
-        // 4. 分页查询并批量装配题目信息
+        // 6. 分页查询并批量装配题目信息
         IPage<Submission> page = submissionMapper.selectPage(new Page<>(query.page(), query.pageSize()), wrapper);
         Map<String, Challenge> challenges = challengeMapper.selectBatchIds(
                         page.getRecords().stream().map(Submission::getChallengeId).distinct().toList())
@@ -169,22 +186,33 @@ public class SubmissionServiceImpl implements SubmissionService {
     }
 
     @Override
-    public MyProgressVO myProgress(UserPrincipal principal) {
-        // 1. 统计当前主体已解出题目
-        String subjectKey = principal.teamId() == null ? principal.userId() : principal.teamId();
+    public MyProgressVO myProgress(UserPrincipal principal, String eventId) {
+        // 1. 解析赛事并读取选手在该赛事中的队伍
+        EventConfig event = eventId == null || eventId.isBlank()
+                ? eventService.requireCurrent() : eventService.requireById(eventId);
+        Team team = teamService.findMembership(event.getId(), principal.userId());
+        if (team == null) {
+            int total = Math.toIntExact(challengeMapper.selectCount(Wrappers.<Challenge>lambdaQuery()
+                    .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED)
+                    .eq(Challenge::getEventId, event.getId())));
+            return new MyProgressVO(0, total, 0, null, null, List.of());
+        }
+
+        // 2. 统计该赛事队伍已解出题目
         List<Solve> solves = solveMapper.selectList(Wrappers.<Solve>lambdaQuery()
-                .eq(Solve::getSubjectKey, subjectKey)
+                .eq(Solve::getSubjectKey, team.getId())
                 .orderByAsc(Solve::getSolvedAt));
 
-        // 2. 汇总累计分数
+        // 3. 汇总累计分数
         int score = solves.stream()
                 .mapToInt(solve -> (solve.getBasePoints() == null ? 0 : solve.getBasePoints())
                         + (solve.getBonusPoints() == null ? 0 : solve.getBonusPoints()))
                 .sum();
 
-        // 3. 统计已发布题目总数，形成 x/y 进度
+        // 4. 统计该赛事已发布题目总数，形成 x/y 进度
         long total = challengeMapper.selectCount(Wrappers.<Challenge>lambdaQuery()
-                .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED));
+                .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED)
+                .eq(Challenge::getEventId, event.getId()));
         Map<String, String> codeById = challengeMapper.selectBatchIds(
                         solves.stream().map(Solve::getChallengeId).distinct().toList())
                 .stream().collect(Collectors.toMap(Challenge::getId, Challenge::getCode));
@@ -193,9 +221,9 @@ public class SubmissionServiceImpl implements SubmissionService {
                 .filter(java.util.Objects::nonNull)
                 .toList();
 
-        // 4. 组装响应，含队伍信息与解题编号列表
-        return new MyProgressVO(solves.size(), (int) total, score, principal.teamId(),
-                teamService.teamName(principal.teamId()), solvedCodes);
+        // 5. 组装响应，含赛事队伍信息与解题编号列表
+        return new MyProgressVO(solves.size(), (int) total, score, team.getId(),
+                team.getName(), solvedCodes);
     }
 
     /** 校验题目当前可作答。 */
@@ -209,8 +237,9 @@ public class SubmissionServiceImpl implements SubmissionService {
     }
 
     /** 校验赛事处于开放且未结束状态。 */
-    private void assertEventOpen() {
-        EventConfig event = eventService.requireCurrent();
+    private void assertEventOpen(Challenge challenge) {
+        EventConfig event = challenge.getEventId() == null
+                ? eventService.requireCurrent() : eventService.requireById(challenge.getEventId());
         if (event.getStatus() != EventStatus.OPEN) {
             throw new ConflictException(ErrorCode.SUBMISSION_CLOSED, "赛事当前不可作答");
         }
@@ -225,7 +254,7 @@ public class SubmissionServiceImpl implements SubmissionService {
 
     /** 按 requestId 幂等回放既有提交。 */
     private SubmissionResultVO replayByRequestId(SubmitAnswerDTO request,
-                                                               UserPrincipal principal, Challenge challenge) {
+                                                 UserPrincipal principal, Challenge challenge) {
         if (request.requestId() == null || request.requestId().isBlank()) {
             return null;
         }
@@ -237,10 +266,14 @@ public class SubmissionServiceImpl implements SubmissionService {
         if (existing == null) {
             return null;
         }
+        String eventId = challenge.getEventId() == null
+                ? eventService.requireCurrent().getId() : challenge.getEventId();
+        Team team = teamService.findMembership(eventId, principal.userId());
+        String subjectKey = team == null ? principal.userId() : team.getId();
         // 既有记录为正确提交时，回放首次完成信息（名次、得分）
         if (existing.getResult() == SubmissionResult.CORRECT) {
             Solve solve = solveMapper.selectOne(Wrappers.<Solve>lambdaQuery()
-                    .eq(Solve::getSubjectKey, principal.teamId() == null ? principal.userId() : principal.teamId())
+                    .eq(Solve::getSubjectKey, subjectKey)
                     .eq(Solve::getChallengeId, challenge.getId()));
             if (solve != null) {
                 return new SubmissionResultVO(existing.getId(), challenge.getCode(),
@@ -248,22 +281,23 @@ public class SubmissionServiceImpl implements SubmissionService {
                         solve.getBasePoints(), solve.getBonusPoints(),
                         (solve.getBasePoints() == null ? 0 : solve.getBasePoints())
                                 + (solve.getBonusPoints() == null ? 0 : solve.getBonusPoints()),
-                        solve.getSolvePlace(), progressOf(principal), solve.getSource() == null ? null
+                        solve.getSolvePlace(), progressOf(eventId, subjectKey), solve.getSource() == null ? null
                         : solve.getSource().apiValue());
             }
         }
         return new SubmissionResultVO(existing.getId(), challenge.getCode(),
-                existing.getResult().apiValue(), null, null, 0, 0, 0, null, progressOf(principal),
+                existing.getResult().apiValue(), null, null, 0, 0, 0, null,
+                progressOf(eventId, subjectKey),
                 SolveSource.ANSWER.apiValue());
     }
 
     /** 统计进度，用于幂等回放响应。 */
-    private ProgressVO progressOf(UserPrincipal principal) {
-        String subjectKey = principal.teamId() == null ? principal.userId() : principal.teamId();
+    private ProgressVO progressOf(String eventId, String subjectKey) {
         long solved = solveMapper.selectCount(Wrappers.<Solve>lambdaQuery()
                 .eq(Solve::getSubjectKey, subjectKey));
         long total = challengeMapper.selectCount(Wrappers.<Challenge>lambdaQuery()
-                .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED));
+                .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED)
+                .eq(Challenge::getEventId, eventId));
         return new ProgressVO((int) solved, (int) total);
     }
 
@@ -279,7 +313,8 @@ public class SubmissionServiceImpl implements SubmissionService {
     /** 校验提交记录归属。 */
     private void assertOwnership(Submission submission, UserPrincipal principal) {
         boolean isSelf = principal.userId().equals(submission.getUserId());
-        boolean isTeammate = principal.teamId() != null && principal.teamId().equals(submission.getTeamId());
+        boolean isTeammate = submission.getTeamId() != null
+                && teamService.membershipTeamIds(principal.userId()).contains(submission.getTeamId());
         if (!isSelf && !isTeammate && !principal.isAdmin()) {
             throw new ForbiddenException("无权查看他人提交记录");
         }

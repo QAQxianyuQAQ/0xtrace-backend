@@ -16,6 +16,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.qaqxianyuqaq.backend.domain.entity.Challenge;
 import com.qaqxianyuqaq.backend.domain.entity.ChallengeFile;
 import com.qaqxianyuqaq.backend.domain.entity.Solve;
+import com.qaqxianyuqaq.backend.domain.entity.Team;
 import com.qaqxianyuqaq.backend.domain.enums.ChallengeStatus;
 import com.qaqxianyuqaq.backend.domain.enums.FileKind;
 import com.qaqxianyuqaq.backend.exception.ConflictException;
@@ -30,6 +31,7 @@ import com.qaqxianyuqaq.backend.security.UserPrincipal;
 import com.qaqxianyuqaq.backend.service.cache.CacheService;
 import com.qaqxianyuqaq.backend.service.challenge.ChallengeService;
 import com.qaqxianyuqaq.backend.service.event.EventService;
+import com.qaqxianyuqaq.backend.service.contestant.TeamService;
 import com.qaqxianyuqaq.backend.service.challenge.FileStorageService;
 import com.qaqxianyuqaq.backend.util.CacheKeys;
 import com.qaqxianyuqaq.backend.util.EnumUtil;
@@ -71,9 +73,12 @@ public class ChallengeServiceImpl implements ChallengeService {
 
     private final CredentialCipher credentialCipher;
 
+    private final TeamService teamService;
+
     public ChallengeServiceImpl(ChallengeMapper challengeMapper, ChallengeFileMapper challengeFileMapper,
                                 SolveMapper solveMapper, CacheService cacheService, EventService eventService,
-                                FileStorageService fileStorageService, CredentialCipher credentialCipher) {
+                                FileStorageService fileStorageService, CredentialCipher credentialCipher,
+                                TeamService teamService) {
         this.challengeMapper = challengeMapper;
         this.challengeFileMapper = challengeFileMapper;
         this.solveMapper = solveMapper;
@@ -81,6 +86,7 @@ public class ChallengeServiceImpl implements ChallengeService {
         this.eventService = eventService;
         this.fileStorageService = fileStorageService;
         this.credentialCipher = credentialCipher;
+        this.teamService = teamService;
     }
 
     @Override
@@ -95,22 +101,27 @@ public class ChallengeServiceImpl implements ChallengeService {
     }
 
     @Override
-    public PageVO<ChallengeVO> listPublic(String category, String difficulty, UserPrincipal viewer,
-                                                        PageQueryDTO query) {
-        // 1. 仅查询对选手可见的题目（发布或暂停），草稿与归档一律不可见
+    public PageVO<ChallengeVO> listPublic(String eventId, String category, String difficulty,
+                                          UserPrincipal viewer, PageQueryDTO query) {
+        // 1. 解析赛事范围，题目列表默认返回当前赛事
+        String effectiveEventId = eventId == null || eventId.isBlank()
+                ? eventService.requireCurrent().getId() : eventService.requireById(eventId).getId();
+
+        // 2. 仅查询赛事内对选手可见的题目（发布或暂停），草稿与归档一律不可见
         var wrapper = Wrappers.<Challenge>lambdaQuery()
+                .eq(Challenge::getEventId, effectiveEventId)
                 .in(Challenge::getStatus, ChallengeStatus.PUBLISHED, ChallengeStatus.PAUSED)
                 .eq(category != null && !category.isBlank(), Challenge::getCategory, category)
                 .eq(difficulty != null && !difficulty.isBlank(), Challenge::getDifficulty, difficulty)
                 .orderByDesc(Challenge::getPublishedAt);
         IPage<Challenge> page = challengeMapper.selectPage(new Page<>(query.page(), query.pageSize()), wrapper);
 
-        // 2. 批量装载附件与当前选手的解题状态，避免 N+1 查询
+        // 3. 批量装载附件与当前选手在该赛事的队伍解题状态，避免 N+1 查询
         List<String> challengeIds = page.getRecords().stream().map(Challenge::getId).toList();
         Map<String, List<FileVO>> attachments = loadAttachmentMap(challengeIds);
-        Set<String> solvedChallengeIds = loadSolvedChallengeIds(viewer, challengeIds);
+        Set<String> solvedChallengeIds = loadSolvedChallengeIds(viewer, effectiveEventId, challengeIds);
 
-        // 3. 组装响应模型，永不包含 answer 字段
+        // 4. 组装响应模型，永不包含 answer 字段
         List<ChallengeVO> items = page.getRecords().stream()
                 .map(challenge -> new ChallengeVO(challenge.getCode(), challenge.getTitle(),
                         challenge.getCategory(), challenge.getDifficulty(), challenge.getPoints(),
@@ -133,8 +144,11 @@ public class ChallengeServiceImpl implements ChallengeService {
         ChallengePayloadVO payload = loadCachedPayload(challenge);
         String myStatus = "unsolved";
         if (viewer != null) {
-            // 3. 实时计算当前选手/队伍的解题状态，避免缓存串号
-            myStatus = loadSolvedChallengeIds(viewer, List.of(challenge.getId())).contains(challenge.getId())
+            // 3. 实时计算当前选手在当前赛事队伍的解题状态，避免缓存串号
+            String eventId = challenge.getEventId() == null
+                    ? eventService.requireCurrent().getId() : challenge.getEventId();
+            myStatus = loadSolvedChallengeIds(viewer, eventId, List.of(challenge.getId()))
+                    .contains(challenge.getId())
                     ? "solved" : "unsolved";
         }
 
@@ -398,14 +412,18 @@ public class ChallengeServiceImpl implements ChallengeService {
         return grouped;
     }
 
-    /** 查询当前选手/队伍已解出的题目 ID 集合。 */
-    private Set<String> loadSolvedChallengeIds(UserPrincipal viewer, Collection<String> challengeIds) {
+    /** 查询当前选手在赛事队伍中已解出的题目 ID 集合。 */
+    private Set<String> loadSolvedChallengeIds(UserPrincipal viewer, String eventId,
+                                               Collection<String> challengeIds) {
         if (viewer == null || challengeIds == null || challengeIds.isEmpty()) {
             return Set.of();
         }
-        String subjectKey = viewer.teamId() == null ? viewer.userId() : viewer.teamId();
+        Team team = teamService.findMembership(eventId, viewer.userId());
+        if (team == null) {
+            return Set.of();
+        }
         List<Solve> solves = solveMapper.selectList(Wrappers.<Solve>lambdaQuery()
-                .eq(Solve::getSubjectKey, subjectKey)
+                .eq(Solve::getSubjectKey, team.getId())
                 .in(Solve::getChallengeId, challengeIds));
         return solves.stream().map(Solve::getChallengeId).collect(Collectors.toSet());
     }
