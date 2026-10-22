@@ -13,8 +13,10 @@ ALLOWLIST=(
   "src/main/resources/application-dev.yml"
   "src/test/resources/application-test.yml"
   ".env.example"
+  ".env.deploy.example"
   "k8s/secret.example.yaml"
   "README.md"
+  "DEPLOY.md"
   "scripts/scan-secrets.sh"
   ".githooks/pre-commit"
 )

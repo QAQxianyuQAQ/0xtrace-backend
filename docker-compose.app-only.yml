@@ -1,0 +1,81 @@
+# TraceQuest 后端「仅应用」编排：MySQL / Redis / MinIO 复用宿主机上已有的容器或服务
+#
+# 适用场景：中间件已经由别的 Compose 项目或运维流程维护，本仓库只负责发布应用。
+#
+# 用法：
+#   1. cp .env.deploy.example .env 并填写凭据，其中 TQ_DB_HOST / TQ_REDIS_HOST / TQ_MINIO_ENDPOINT
+#      要指向已有中间件的地址（见 DEPLOY.md 第 12 节）
+#   2. docker compose -f docker-compose.app-only.yml up -d --build
+#
+# 注意：
+#   - 应用不负责建表：请依次导入 V1__init_schema.sql 与 V2__event_scoped_teams.sql。
+#   - TQ_MINIO_ENDPOINT 必须与浏览器访问 MinIO 使用的 Host 完全一致，
+#     否则预签名地址会因签名校验失败返回 403 SignatureDoesNotMatch。
+version: "3.7"
+# 说明：Compose v2 会提示 version 字段已废弃，可忽略；保留它是为了兼容旧版 docker-compose（1.x）解析。
+
+services:
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${TQ_IMAGE:-tracequest-backend:1.0.0}
+    container_name: tracequest-backend
+    restart: unless-stopped
+    stop_grace_period: 40s
+    # 已有中间件只把端口发布到 127.0.0.1 时无法用宿主机 IP 回连，
+    # 把 TQ_DB_HOST / TQ_REDIS_HOST 设为 host.docker.internal 并在下方保留该映射即可；
+    # 若对方服务发布在 0.0.0.0，也可以直接填宿主机 IP。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
+      # MySQL：已有实例的地址与端口
+      TQ_DB_HOST: ${TQ_DB_HOST:?请在 .env 中填写已有 MySQL 的地址}
+      TQ_DB_PORT: ${TQ_DB_PORT:-3306}
+      TQ_DB_NAME: ${TQ_DB_NAME:-tracequest}
+      TQ_DB_USERNAME: ${TQ_DB_USERNAME:?请在 .env 中填写已有 MySQL 的账号}
+      TQ_DB_PASSWORD: ${TQ_DB_PASSWORD:?请在 .env 中填写已有 MySQL 的口令}
+      # Redis：键统一带 tq: 前缀，可与同实例的其它应用共存
+      TQ_REDIS_HOST: ${TQ_REDIS_HOST:?请在 .env 中填写已有 Redis 的地址}
+      TQ_REDIS_PORT: ${TQ_REDIS_PORT:-6379}
+      TQ_REDIS_PASSWORD: ${TQ_REDIS_PASSWORD:-}
+      # MinIO：必须是浏览器可直接访问、且与浏览器所用 Host 完全一致的地址
+      TQ_MINIO_ENDPOINT: ${TQ_MINIO_ENDPOINT:?请在 .env 中填写已有 MinIO 的对外地址}
+      TQ_MINIO_ACCESS_KEY: ${TQ_MINIO_ACCESS_KEY:?请在 .env 中填写 MinIO 访问密钥}
+      TQ_MINIO_SECRET_KEY: ${TQ_MINIO_SECRET_KEY:?请在 .env 中填写 MinIO 私钥}
+      TQ_MINIO_BUCKET: ${TQ_MINIO_BUCKET:-tracequest}
+      # 启动时自动建桶（需要凭据具备建桶权限；桶已存在时无副作用）
+      TQ_MINIO_INIT: ${TQ_MINIO_INIT:-true}
+      # 应用密钥
+      TQ_JWT_SECRET: ${TQ_JWT_SECRET:?请在 .env 中设置 TQ_JWT_SECRET}
+      TQ_ANSWER_SECRET: ${TQ_ANSWER_SECRET:?请在 .env 中设置 TQ_ANSWER_SECRET}
+      # 会话与来源校验
+      TQ_COOKIE_SECURE: ${TQ_COOKIE_SECURE:-false}
+      TQ_ENFORCE_SAME_ORIGIN: ${TQ_ENFORCE_SAME_ORIGIN:-true}
+      # 初始化数据装配：首次创建管理员时临时改为 true
+      TQ_BOOTSTRAP_ENABLED: ${TQ_BOOTSTRAP_ENABLED:-false}
+      TQ_ADMIN_USERNAME: ${TQ_ADMIN_USERNAME:-admin}
+      TQ_ADMIN_PASSWORD: ${TQ_ADMIN_PASSWORD:?请在 .env 中设置 TQ_ADMIN_PASSWORD}
+      TQ_STRICT_SECRET_CHECK: ${TQ_STRICT_SECRET_CHECK:-true}
+      # 赛事默认值
+      TQ_EVENT_NAME: ${TQ_EVENT_NAME:-TraceQuest Season 01}
+      TQ_EVENT_TIMEZONE: ${TQ_EVENT_TIMEZONE:-Asia/Shanghai}
+    ports:
+      - "${TQ_SERVER_PORT:-8080}:8080"
+
+# 方式二（可选）：不复用宿主机端口，而是直接加入对方 Compose 的容器网络。
+# 打开下面注释，把 TQ_DB_HOST / TQ_REDIS_HOST 改成对方 compose 里的服务名，
+# 并把 existing 的名字换成 `docker network ls` 中看到的网络名（通常是 <对方项目名>_default）。
+#
+# networks:
+#   default:
+#   existing:
+#     external: true
+#     name: mysql_default
+#
+# 同时需要在 app 服务里补上：
+#     networks:
+#       - default
+#       - existing

@@ -1,0 +1,154 @@
+# TraceQuest 后端单机 Docker 编排（Ubuntu 20.04 可直接使用）
+#
+# 用法与完整步骤见 DEPLOY.md：
+#   1. cp .env.deploy.example .env 并填写各凭据
+#   2. docker compose up -d --build
+#
+# 约定：
+#   - 所有敏感值只从同目录 .env 读取，仓库内不保存任何真实凭据（.env 已被 .gitignore 忽略）。
+#   - MySQL 与 Redis 只在内部网络暴露，不对宿主机发布端口，避免数据库直接暴露到公网。
+#   - MinIO 需要发布端口：预签名下载地址由 TQ_MINIO_ENDPOINT 生成，浏览器必须能直接访问该地址。
+version: "3.7"
+# 说明：Compose v2 会提示 version 字段已废弃，可忽略；保留它是为了兼容旧版 docker-compose（1.x）解析。
+
+services:
+
+  # MySQL：唯一数据源。首次初始化会自动执行 resources/sql 下的建表脚本。
+  mysql:
+    image: mysql:8.0
+    container_name: tracequest-mysql
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      # 时间列统一按 UTC 存储，与 JDBC 连接参数 serverTimezone=UTC 保持一致
+      - --default-time-zone=+00:00
+    environment:
+      MYSQL_ROOT_PASSWORD: ${TQ_DB_ROOT_PASSWORD:?请在 .env 中设置 TQ_DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${TQ_DB_NAME:-tracequest}
+      MYSQL_USER: ${TQ_DB_USERNAME:-tracequest}
+      MYSQL_PASSWORD: ${TQ_DB_PASSWORD:?请在 .env 中设置 TQ_DB_PASSWORD}
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 建表脚本不含 USE 语句，entrypoint 会在 MYSQL_DATABASE 指定的库内执行
+      - ./src/main/resources/sql/V1__init_schema.sql:/docker-entrypoint-initdb.d/01-init-schema.sql:ro
+      - ./src/main/resources/sql/V2__event_scoped_teams.sql:/docker-entrypoint-initdb.d/02-event-scoped-teams.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks:
+      - tracequest
+
+  # Redis：限流计数、令牌黑名单与挑战/榜单缓存
+  redis:
+    image: redis:7-alpine
+    container_name: tracequest-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --requirepass
+      - ${TQ_REDIS_PASSWORD:?请在 .env 中设置 TQ_REDIS_PASSWORD}
+      - --appendonly
+      - "yes"
+    environment:
+      # 仅用于健康检查命令读取口令，Redis 自身通过命令行参数设置密码
+      REDIS_PASSWORD: ${TQ_REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - tracequest
+
+  # MinIO：题目附件与封面等对象存储
+  minio:
+    # 生产环境建议固定到具体 RELEASE 标签（例如 minio/minio:RELEASE.2024-xx-xx），避免浮动升级
+    image: minio/minio
+    container_name: tracequest-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${TQ_MINIO_ACCESS_KEY:?请在 .env 中设置 TQ_MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${TQ_MINIO_SECRET_KEY:?请在 .env 中设置 TQ_MINIO_SECRET_KEY}
+      TZ: Asia/Shanghai
+    ports:
+      # 9000 为 S3 API（浏览器下载直接走这里）；9001 为控制台端口，
+      # 新版 MinIO 社区版已移除内置网页控制台，此时该端口不会被监听，可用 mc 客户端管理
+      - "${TQ_MINIO_API_PORT:-9000}:9000"
+      - "${TQ_MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - tracequest
+
+  # 后端应用：镜像由仓库根目录 Dockerfile 多阶段构建，容器内以非 root 用户运行
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${TQ_IMAGE:-tracequest-backend:1.0.0}
+    container_name: tracequest-backend
+    restart: unless-stopped
+    # 优雅停机：等待 Spring Boot 处理完在途请求（应用侧超时 20s）
+    stop_grace_period: 40s
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      # 运行 profile：留空即可；生产强校验由 TQ_STRICT_SECRET_CHECK 显式开关控制
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
+      # MySQL：容器内通过服务名访问，无需发布端口
+      TQ_DB_HOST: ${TQ_DB_HOST:-mysql}
+      TQ_DB_PORT: ${TQ_DB_PORT:-3306}
+      TQ_DB_NAME: ${TQ_DB_NAME:-tracequest}
+      TQ_DB_USERNAME: ${TQ_DB_USERNAME:-tracequest}
+      TQ_DB_PASSWORD: ${TQ_DB_PASSWORD:?请在 .env 中设置 TQ_DB_PASSWORD}
+      # Redis
+      TQ_REDIS_HOST: ${TQ_REDIS_HOST:-redis}
+      TQ_REDIS_PORT: ${TQ_REDIS_PORT:-6379}
+      TQ_REDIS_PASSWORD: ${TQ_REDIS_PASSWORD:?请在 .env 中设置 TQ_REDIS_PASSWORD}
+      # MinIO：该地址同时用于生成预签名下载链接，必须是浏览器可访问的地址
+      TQ_MINIO_ENDPOINT: ${TQ_MINIO_ENDPOINT:?请在 .env 中设置 TQ_MINIO_ENDPOINT}
+      TQ_MINIO_ACCESS_KEY: ${TQ_MINIO_ACCESS_KEY:?请在 .env 中设置 TQ_MINIO_ACCESS_KEY}
+      TQ_MINIO_SECRET_KEY: ${TQ_MINIO_SECRET_KEY:?请在 .env 中设置 TQ_MINIO_SECRET_KEY}
+      TQ_MINIO_BUCKET: ${TQ_MINIO_BUCKET:-tracequest}
+      TQ_MINIO_INIT: "true"
+      # 应用密钥：缺失即启动失败（fail-fast）
+      TQ_JWT_SECRET: ${TQ_JWT_SECRET:?请在 .env 中设置 TQ_JWT_SECRET}
+      TQ_ANSWER_SECRET: ${TQ_ANSWER_SECRET:?请在 .env 中设置 TQ_ANSWER_SECRET}
+      # 会话与来源校验
+      TQ_COOKIE_SECURE: ${TQ_COOKIE_SECURE:-false}
+      TQ_ENFORCE_SAME_ORIGIN: ${TQ_ENFORCE_SAME_ORIGIN:-true}
+      # 初始化数据装配：正式环境必须为 false，生产强校验会拦截开启状态
+      TQ_BOOTSTRAP_ENABLED: ${TQ_BOOTSTRAP_ENABLED:-false}
+      TQ_ADMIN_USERNAME: ${TQ_ADMIN_USERNAME:-admin}
+      TQ_ADMIN_PASSWORD: ${TQ_ADMIN_PASSWORD:?请在 .env 中设置 TQ_ADMIN_PASSWORD}
+      TQ_STRICT_SECRET_CHECK: ${TQ_STRICT_SECRET_CHECK:-true}
+      # 赛事默认值
+      TQ_EVENT_NAME: ${TQ_EVENT_NAME:-TraceQuest Season 01}
+      TQ_EVENT_TIMEZONE: ${TQ_EVENT_TIMEZONE:-Asia/Shanghai}
+    ports:
+      - "${TQ_SERVER_PORT:-8080}:8080"
+    networks:
+      - tracequest
+
+volumes:
+  mysql-data:
+  redis-data:
+  minio-data:
+
+networks:
+  tracequest:
+    driver: bridge
