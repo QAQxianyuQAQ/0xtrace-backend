@@ -1,3 +1,5 @@
+> 历史部署说明：本文件保留旧接口和部署路径，不能作为本次上线操作入口。请先读 [2026-10-25完整交付说明](docs/DELIVERY_2026-10-25.md) 及其中的服务器手册；本次不公开MinIO、不在prod开启bootstrap、不在URL传递令牌、不执行prune，且必须包含V3迁移。
+
 # 部署到 Ubuntu 20.04（Docker Compose）
 
 本文档描述把 TraceQuest 后端以 **单机 Docker Compose** 方式部署到 Ubuntu 20.04 的完整流程。
