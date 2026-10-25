@@ -35,8 +35,11 @@ public interface FileStorageService {
     /** 按文件 ID 读取文件元数据，不存在时抛出 404。 */
     ChallengeFile requireFile(String fileId);
 
-    /** 生成短效预签名下载地址。 */
-    String presignedDownloadUrl(ChallengeFile file);
+    /** 校验登录角色及题目赛事可见性后返回文件元数据。 */
+    ChallengeFile requireDownloadableFile(String fileId, UserPrincipal principal);
+
+    /** 读取已经过权限检查的对象字节范围，由控制器负责关闭流。 */
+    java.io.InputStream openDownload(ChallengeFile file, long offset, long length);
 
     /** 删除题目下的全部文件（数据库行与对象存储对象），供题目删除时调用。 */
     void deleteAllFiles(String challengeId);

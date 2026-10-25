@@ -28,6 +28,7 @@ import com.qaqxianyuqaq.backend.util.TimeUtil;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 /**
  * 计分引擎实现。
@@ -77,10 +78,15 @@ public class ScoringServiceImpl implements ScoringService {
     }
 
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     @DistributedLock(key = "#challenge.id")
     public SubmissionResultVO award(UserPrincipal principal, Challenge challenge, SolveSource source,
                                                    String answerText, String requestId, boolean correct) {
+        // 0. 以题目行锁覆盖名次读取和写入；READ_COMMITTED避免外层事务的旧快照重复分配首解。
+        if (challengeMapper.lockForScoring(challenge.getId()) == null) {
+            throw new com.qaqxianyuqaq.backend.exception.NotFoundException("题目不存在");
+        }
+
         // 1. 解析题目所属赛事并要求选手已经加入该赛事队伍
         String eventId = eventIdOf(challenge);
         Team team = teamService.requireMembership(eventId, principal.userId());

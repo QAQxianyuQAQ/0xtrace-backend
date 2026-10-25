@@ -178,3 +178,5 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uk_idempotency_scope_key_user
     ON idempotency_records (scope, idempotency_key, user_id);
+
+CREATE TABLE IF NOT EXISTS storage_cleanup_jobs(storage_key VARCHAR(512) PRIMARY KEY, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);

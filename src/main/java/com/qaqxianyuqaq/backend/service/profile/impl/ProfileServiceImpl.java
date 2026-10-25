@@ -43,7 +43,11 @@ public class ProfileServiceImpl implements ProfileService {
         }
 
         // 3. 落库保存
-        userMapper.updateById(user);
+        var update = com.baomidou.mybatisplus.core.toolkit.Wrappers.<User>lambdaUpdate()
+                .eq(User::getId, user.getId())
+                .set(request.nickname() != null, User::getNickname, user.getNickname())
+                .set(request.avatarUrl() != null, User::getAvatarUrl, user.getAvatarUrl());
+        if (request.nickname() != null || request.avatarUrl() != null) userMapper.update(null, update);
         return new ProfileVO(user.getUsername(), user.getNickname(), user.getAvatarUrl());
     }
 

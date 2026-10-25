@@ -73,10 +73,12 @@ public class ContestantServiceImpl implements ContestantService {
 
     private final EventService eventService;
 
+    private final jakarta.validation.Validator validator;
+
     public ContestantServiceImpl(UserMapper userMapper, TeamMapper teamMapper, TeamMemberMapper teamMemberMapper,
                                  SolveMapper solveMapper, PasswordEncoder passwordEncoder,
                                  SessionService sessionService, TeamService teamService,
-                                 EventService eventService) {
+                                 EventService eventService, jakarta.validation.Validator validator) {
         this.userMapper = userMapper;
         this.teamMapper = teamMapper;
         this.teamMemberMapper = teamMemberMapper;
@@ -85,6 +87,7 @@ public class ContestantServiceImpl implements ContestantService {
         this.sessionService = sessionService;
         this.teamService = teamService;
         this.eventService = eventService;
+        this.validator = validator;
     }
 
     @Override
@@ -137,6 +140,9 @@ public class ContestantServiceImpl implements ContestantService {
     @Override
     @Transactional
     public ContestantVO create(ContestantCreateDTO request, UserPrincipal operator) {
+        // 0. JSON 和 CSV 共用完整账号约束，在创建队伍和散列密码前拒绝非法输入。
+        var errors = validator.validate(request);
+        if (!errors.isEmpty()) throw new ValidationFailedException("account", errors.iterator().next().getMessage());
         // 1. 校验用户名唯一，避免覆盖既有账号
         boolean exists = userMapper.exists(Wrappers.<User>lambdaQuery()
                 .eq(User::getUsername, request.username().trim()));
@@ -214,8 +220,13 @@ public class ContestantServiceImpl implements ContestantService {
             }
         }
 
-        // 5. 落库并同步当前赛事队伍成员关系
-        userMapper.updateById(user);
+        // 5. 显式更新可清字段，避免 ORM 忽略空值；未传字段保持原值。
+        userMapper.update(null, Wrappers.<User>lambdaUpdate().eq(User::getId,user.getId())
+                .set(request.teamId()!=null || request.teamName()!=null,User::getTeamId,user.getTeamId())
+                .set(request.note()!=null,User::getNote,user.getNote())
+                .set(request.nickname()!=null,User::getNickname,user.getNickname())
+                .set(request.avatarUrl()!=null,User::getAvatarUrl,user.getAvatarUrl())
+                .set(User::getStatus,user.getStatus()));
         teamService.attachUser(event.getId(), user.getId(), team == null ? null : team.getId());
         return toVO(user, team);
     }
@@ -223,6 +234,9 @@ public class ContestantServiceImpl implements ContestantService {
     @Override
     @Transactional
     public void resetPassword(String userId, String newPassword) {
+        // 0. 内部调用与 HTTP 入口保持相同的密码边界。
+        var errors = validator.validate(new com.qaqxianyuqaq.backend.domain.dto.contestant.PasswordResetDTO(newPassword));
+        if (!errors.isEmpty()) throw new ValidationFailedException("password", errors.iterator().next().getMessage());
         // 1. 读取账号
         User user = requireContestant(userId);
 
@@ -298,34 +312,18 @@ public class ContestantServiceImpl implements ContestantService {
             List<String> row = rows.get(index);
             String username = valueOf(row, columns.get("username"));
             String password = valueOf(row, columns.get("password"));
-            if (username == null || username.isBlank()) {
-                failures.add(new ImportFailureVO(index + 1, username, "用户名为空"));
+            ContestantCreateDTO account = new ContestantCreateDTO(username, password, null,
+                    valueOf(row, columns.get("team")), valueOf(row, columns.get("note")), null);
+            var errors = validator.validate(account);
+            if (!errors.isEmpty()) {
+                failures.add(new ImportFailureVO(index + 1, username, errors.iterator().next().getMessage()));
                 continue;
             }
-            if (password == null || password.length() < 8) {
-                failures.add(new ImportFailureVO(index + 1, username, "密码少于 8 位"));
-                continue;
-            }
-            boolean exists = userMapper.exists(Wrappers.<User>lambdaQuery().eq(User::getUsername, username.trim()));
-            if (exists) {
+            if (userMapper.exists(Wrappers.<User>lambdaQuery().eq(User::getUsername, username.trim()))) {
                 skipped++;
                 continue;
             }
-            EventConfig event = eventService.requireCurrent();
-            Team team = teamService.resolveManagedTeam(event.getId(), null,
-                    valueOf(row, columns.get("team")), true, null);
-            User user = new User();
-            user.setId(IdGenerator.next("usr"));
-            user.setUsername(username.trim());
-            user.setPasswordHash(passwordEncoder.encode(password));
-            user.setRole(UserRole.CONTESTANT);
-            user.setStatus(AccountStatus.ACTIVE);
-            user.setTeamId(team == null ? null : team.getId());
-            user.setNote(valueOf(row, columns.get("note")));
-            user.setTokenVersion(0);
-            user.setCreatedAt(TimeUtil.now());
-            userMapper.insert(user);
-            teamService.attachUser(event.getId(), user.getId(), team == null ? null : team.getId());
+            create(account, null);
             imported++;
         }
 
@@ -391,6 +389,10 @@ public class ContestantServiceImpl implements ContestantService {
     private List<List<String>> parseCsv(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new ValidationFailedException("file", "未接收到 CSV 文件");
+        }
+        if (file.getSize() > 2L * 1024 * 1024) {
+            throw new com.qaqxianyuqaq.backend.exception.StorageException(
+                    com.qaqxianyuqaq.backend.exception.ErrorCode.PAYLOAD_TOO_LARGE, "CSV 不能超过 2MiB");
         }
         try {
             String content = new String(file.getBytes(), StandardCharsets.UTF_8);

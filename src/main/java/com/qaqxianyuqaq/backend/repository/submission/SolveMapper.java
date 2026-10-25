@@ -10,6 +10,17 @@ import org.apache.ibatis.annotations.Select;
 
 /** 解题记录持久化接口，提供计分与排行榜聚合查询。 */
 public interface SolveMapper extends BaseMapper<Solve> {
+    /** 进度和榜单共用同一赛事队伍计分口径，包含人工调整。 */
+    @Select("""
+            SELECT COALESCE((SELECT SUM(s.base_points + s.bonus_points)
+              FROM solves s JOIN challenges c ON c.id=s.challenge_id
+              WHERE c.event_id=#{eventId} AND s.team_id=#{teamId}), 0)
+              + COALESCE((SELECT SUM(a.delta) FROM score_adjustments a
+              JOIN teams t ON t.id=a.team_id
+              WHERE t.event_id=#{eventId} AND a.team_id=#{teamId}), 0)
+            """)
+    long selectTeamScore(@Param("eventId") String eventId, @Param("teamId") String teamId);
+
 
     /**
      * 队伍维度排行榜聚合：总分降序、解题数降序、最后解题时间升序。

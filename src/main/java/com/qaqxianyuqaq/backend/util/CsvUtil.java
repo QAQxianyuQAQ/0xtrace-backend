@@ -80,6 +80,12 @@ public final class CsvUtil {
     /** 转义单个字段。 */
     public static String escape(String value) {
         String safe = value == null ? "" : value;
+        // 表格软件可能忽略前导空白；引号只保护 CSV 结构，单引号才阻止公式求值。
+        String leading = safe.stripLeading();
+        if (safe.indexOf('\t') >= 0 || safe.indexOf('\r') >= 0 || safe.indexOf('\n') >= 0
+                || (!leading.isEmpty() && "=+-@".indexOf(leading.charAt(0)) >= 0)) {
+            safe = "'" + safe;
+        }
         boolean needQuote = safe.contains(",") || safe.contains("\"") || safe.contains("\n") || safe.contains("\r");
         if (!needQuote) {
             return safe;

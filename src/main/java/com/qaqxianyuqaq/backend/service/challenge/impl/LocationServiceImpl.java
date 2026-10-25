@@ -30,6 +30,7 @@ import com.qaqxianyuqaq.backend.util.LocationConstants;
 import com.qaqxianyuqaq.backend.util.TimeUtil;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 import java.time.LocalDateTime;
 
@@ -118,7 +119,7 @@ public class LocationServiceImpl implements LocationService {
     }
 
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     @RateLimit(scope = "location-verify")
     @Idempotent(scope = "location-verification")
     public SubmissionResultVO verify(LocationVerificationDTO request,

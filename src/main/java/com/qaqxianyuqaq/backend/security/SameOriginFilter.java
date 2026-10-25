@@ -87,14 +87,19 @@ public class SameOriginFilter extends OncePerRequestFilter {
             }
         }
         try {
-            String host = URI.create(origin).getHost();
-            String requestHost = request.getHeader("Host");
-            if (host == null || requestHost == null) {
+            URI source = URI.create(origin);
+            String authority = request.getHeader("Host");
+            if (authority == null || source.getHost() == null || source.getUserInfo() != null
+                    || source.getRawQuery() != null || source.getRawFragment() != null
+                    || (source.getRawPath() != null && !source.getRawPath().isEmpty())) {
                 return false;
             }
-            String requestHostName = requestHost.contains(":")
-                    ? requestHost.substring(0, requestHost.indexOf(':')) : requestHost;
-            return host.equalsIgnoreCase(requestHostName);
+            URI target = URI.create(request.getScheme() + "://" + authority);
+            int sourcePort = source.getPort() == -1 ? ("https".equalsIgnoreCase(source.getScheme()) ? 443 : 80) : source.getPort();
+            int targetPort = target.getPort() == -1 ? ("https".equalsIgnoreCase(target.getScheme()) ? 443 : 80) : target.getPort();
+            return ("https".equalsIgnoreCase(source.getScheme()) || "http".equalsIgnoreCase(source.getScheme()))
+                    && source.getScheme().equalsIgnoreCase(target.getScheme())
+                    && source.getHost().equalsIgnoreCase(target.getHost()) && sourcePort == targetPort;
         } catch (IllegalArgumentException exception) {
             return false;
         }
