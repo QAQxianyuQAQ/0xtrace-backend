@@ -39,7 +39,7 @@ class SameOriginFilterTest {
         SameOriginFilter filter = filter(true);
         MockHttpServletRequest allowed = new MockHttpServletRequest("POST", "/api/v1/auth/login");
         allowed.addHeader("Host", "ctf.example.com:8080");
-        allowed.addHeader("Origin", "http://ctf.example.com");
+        allowed.addHeader("Origin", "http://ctf.example.com:8080");
         MockHttpServletResponse allowedResponse = new MockHttpServletResponse();
         AtomicBoolean allowedProceeded = new AtomicBoolean(false);
         filter.doFilter(allowed, allowedResponse, (req, res) -> allowedProceeded.set(true));
@@ -66,6 +66,19 @@ class SameOriginFilterTest {
         filter.doFilter(request, response, (req, res) -> proceeded.set(true));
 
         assertThat(proceeded).isTrue();
+    }
+
+    @Test
+    @DisplayName("同主机不同端口或协议仍为跨源")
+    void shouldRejectPortAndSchemeChanges() throws Exception {
+        for (String origin : java.util.List.of("http://ctf.example.com", "https://ctf.example.com:8080", "null")) {
+            MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/auth/login");
+            request.addHeader("Host", "ctf.example.com:8080");
+            request.addHeader("Origin", origin);
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            filter(true).doFilter(request, response, (req, res) -> { throw new AssertionError("跨源请求被放行"); });
+            assertThat(response.getStatus()).isEqualTo(403);
+        }
     }
 
     private SameOriginFilter filter(boolean enforce) {

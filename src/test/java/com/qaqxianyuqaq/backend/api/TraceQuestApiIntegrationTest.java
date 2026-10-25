@@ -124,7 +124,7 @@ class TraceQuestApiIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(Map.of("answer", "flag{refraction}", "requestId", "req-first"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.completion").value("already_solved"))
+                .andExpect(jsonPath("$.completion").value("first_solve"))
                 .andExpect(jsonPath("$.submissionId").value(submissionId))
                 .andExpect(jsonPath("$.pointsAwarded").value(500));
 
@@ -256,8 +256,8 @@ class TraceQuestApiIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(Map.of("name", "Team Cup",
                                 "timezone", "Asia/Shanghai",
-                                "startsAt", "2026-10-22T09:00:00+08:00",
-                                "endsAt", "2026-10-22T18:00:00+08:00",
+                                "startsAt", java.time.Instant.now().minusSeconds(60).toString(),
+                                "endsAt", java.time.Instant.now().plusSeconds(86400).toString(),
                                 "maxTeamSize", 2))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.name").value("Team Cup"))
@@ -400,6 +400,49 @@ class TraceQuestApiIntegrationTest {
         String csv = export.getResponse().getContentAsString();
         assertThat(csv).contains("username,team,status,created,note");
         assertThat(csv).doesNotContain("password");
+    }
+
+
+    @Test
+    @DisplayName("输入边界、空值清除和 CSV 逐行校验回归")
+    void shouldRejectInvalidInputAndPersistClears() throws Exception {
+        String admin=login("admin","admin12345");
+        for (String password : java.util.List.of("x".repeat(73),"汉".repeat(25))) {
+            mockMvc.perform(post("/api/v1/admin/contestants").cookie(sessionCookie(admin))
+                    .contentType(MediaType.APPLICATION_JSON).content(json(Map.of("username","bad_pw","password",password))))
+                    .andExpect(status().isBadRequest());
+            mockMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                    .content(json(Map.of("username","unknown","password",password))))
+                    .andExpect(status().isBadRequest());
+        }
+        mockMvc.perform(get("/api/v1/me/submissions").cookie(sessionCookie(admin)).param("page","not-a-number"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.requestId").isNotEmpty());
+        mockMvc.perform(get("/api/v1/admin/challenges").cookie(sessionCookie(admin)).param("pageSize","2147483648"))
+                .andExpect(status().isBadRequest());
+        var payload=challengePayload("NEG-TEST","负数边界","CTF",100);
+        payload.put("bonuses",Map.of("first",-1));
+        mockMvc.perform(post("/api/v1/admin/challenges").cookie(sessionCookie(admin))
+                .contentType(MediaType.APPLICATION_JSON).content(json(payload))).andExpect(status().isBadRequest());
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/v1/admin/challenges/NEG-TEST")
+                .cookie(sessionCookie(admin)).contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("bonuses",Map.of("second",-1))))).andExpect(status().isBadRequest());
+        createContestant(admin,"clear_test","Clear Test");
+        String player=login("clear_test","secret123");
+        for (String nickname : java.util.List.of("待清空", "")) {
+            mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/v1/me/profile")
+                    .cookie(sessionCookie(player)).contentType(MediaType.APPLICATION_JSON)
+                    .content(json(Map.of("nickname",nickname)))).andExpect(status().isOk());
+        }
+        mockMvc.perform(get("/api/v1/auth/me").cookie(sessionCookie(player)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.nickname").doesNotExist());
+        String csv="username,password,team,note\ninvalid name,secret123,,bad\nlong_pass,"+"x".repeat(73)+",,bad\ncsv_valid,secret123,,=1+1\n";
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/api/v1/admin/contestants/import")
+                .file(new org.springframework.mock.web.MockMultipartFile("file","users.csv","text/csv",csv.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                .cookie(sessionCookie(admin))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.imported").value(1)).andExpect(jsonPath("$.failed").value(2));
+        var exported=mockMvc.perform(get("/api/v1/admin/contestants/export").cookie(sessionCookie(admin)))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(exported).contains("'=1+1");
     }
 
     /** 登录并返回会话令牌，测试通过 Cookie 传递身份。 */

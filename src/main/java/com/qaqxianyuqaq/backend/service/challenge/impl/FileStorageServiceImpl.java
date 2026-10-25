@@ -43,6 +43,8 @@ public class FileStorageServiceImpl implements FileStorageService {
 
     private final MinioClient minioClient;
 
+    private final StorageCleanupService cleanup;
+
     private final TraceQuestProperties properties;
 
     private final ChallengeMapper challengeMapper;
@@ -51,14 +53,23 @@ public class FileStorageServiceImpl implements FileStorageService {
 
     private final CacheService cacheService;
 
+    private final com.qaqxianyuqaq.backend.repository.event.EventMapper eventMapper;
+
+    private final com.qaqxianyuqaq.backend.security.PermissionAssert permissionAssert;
+
     public FileStorageServiceImpl(MinioClient minioClient, TraceQuestProperties properties,
                                   ChallengeMapper challengeMapper, ChallengeFileMapper challengeFileMapper,
-                                  CacheService cacheService) {
+                                  CacheService cacheService,
+                                  com.qaqxianyuqaq.backend.repository.event.EventMapper eventMapper,
+                                  com.qaqxianyuqaq.backend.security.PermissionAssert permissionAssert, StorageCleanupService cleanup) {
         this.minioClient = minioClient;
+        this.cleanup = cleanup;
         this.properties = properties;
         this.challengeMapper = challengeMapper;
         this.challengeFileMapper = challengeFileMapper;
         this.cacheService = cacheService;
+        this.eventMapper = eventMapper;
+        this.permissionAssert = permissionAssert;
     }
 
     @Override
@@ -130,8 +141,8 @@ public class FileStorageServiceImpl implements FileStorageService {
             throw new NotFoundException("附件不存在");
         }
 
-        // 2. 删除对象存储内容与元数据，对象删除失败只告警不阻断
-        removeObjectQuietly(file);
+        // 2. 删除对象存储内容与元数据，对象删除失败保留元数据并返回错误
+        removeObject(file);
         challengeFileMapper.deleteById(file.getId());
 
         // 3. 清理题目详情缓存
@@ -147,19 +158,18 @@ public class FileStorageServiceImpl implements FileStorageService {
         // 2. 校验封面体积与 MIME 类型（契约规定 PNG/JPEG/WebP/AVIF，10MB 上限）
         validateCover(file);
 
-        // 3. 移除旧封面，保证一题一封面
+        // 3. 先写新封面；失败时通过事务补偿清理新对象，不破坏旧封面。
         ChallengeFile previous = findCover(challenge.getId());
-        if (previous != null) {
-            removeObjectQuietly(previous);
-            challengeFileMapper.deleteById(previous.getId());
-        }
-
-        // 4. 写入新封面并回写题目封面字段
         ChallengeFile entity = store(challenge, file, FileKind.COVER, operator);
-        challenge.setCoverFileId(entity.getId());
-        challenge.setCoverUrl(null);
-        challenge.setUpdatedAt(TimeUtil.now());
-        challengeMapper.updateById(challenge);
+
+        // 4. 引用更新和旧对象的清理意图原子提交；物理删除交给持久重试任务。
+        challengeMapper.update(null, Wrappers.<Challenge>lambdaUpdate().eq(Challenge::getId, challenge.getId())
+                .set(Challenge::getCoverFileId, entity.getId()).set(Challenge::getCoverUrl, null)
+                .set(Challenge::getUpdatedAt, TimeUtil.now()));
+        if (previous != null) {
+            challengeFileMapper.deleteById(previous.getId());
+            cleanup.enqueueReplacement(previous.getStorageKey());
+        }
 
         // 5. 清理题目详情缓存
         invalidate(code);
@@ -190,12 +200,11 @@ public class FileStorageServiceImpl implements FileStorageService {
         }
 
         // 2. 删除对象与元数据，并清空题目封面字段
-        removeObjectQuietly(cover);
+        removeObject(cover);
         challengeFileMapper.deleteById(cover.getId());
-        challenge.setCoverFileId(null);
-        challenge.setCoverUrl(null);
-        challenge.setUpdatedAt(TimeUtil.now());
-        challengeMapper.updateById(challenge);
+        challengeMapper.update(null, Wrappers.<Challenge>lambdaUpdate().eq(Challenge::getId, challenge.getId())
+                .set(Challenge::getCoverFileId, null).set(Challenge::getCoverUrl, null)
+                .set(Challenge::getUpdatedAt, TimeUtil.now()));
 
         // 3. 清理题目详情缓存
         invalidate(code);
@@ -211,14 +220,22 @@ public class FileStorageServiceImpl implements FileStorageService {
     }
 
     @Override
-    public String presignedDownloadUrl(ChallengeFile file) {
+    public ChallengeFile requireDownloadableFile(String fileId, UserPrincipal principal) {
+        // 1. 先确认登录，再读取文件和所属题目，避免未登录请求探测标识。
+        permissionAssert.assertAuthenticated(principal);
+        ChallengeFile file = requireFile(fileId);
+        Challenge challenge = challengeMapper.selectById(file.getChallengeId());
+        // 2. 在读取对象前统一校验角色、题目状态和赛事时间窗口。
+        permissionAssert.assertDownloadAllowed(principal, challenge,
+                challenge == null ? null : eventMapper.selectById(challenge.getEventId()));
+        return file;
+    }
+
+    @Override
+    public java.io.InputStream openDownload(ChallengeFile file, long offset, long length) {
         try {
-            // 生成短效预签名地址，MinIO 凭证不下发到客户端
-            return MinioUtil.presignedGetUrl(minioClient, properties.getMinio().getBucket(), file.getStorageKey(),
-                    properties.getMinio().getPresignTtl());
-        } catch (Exception exception) {
-            throw new StorageException(ErrorCode.STORAGE_ERROR, "对象存储暂不可用，请稍后重试");
-        }
+            return MinioUtil.getObject(minioClient,properties.getMinio().getBucket(),file.getStorageKey(),offset,length);
+        } catch(Exception error) { throw new StorageException(ErrorCode.STORAGE_ERROR,"对象存储暂不可用，请稍后重试"); }
     }
 
     @Override
@@ -228,9 +245,9 @@ public class FileStorageServiceImpl implements FileStorageService {
         List<ChallengeFile> files = challengeFileMapper.selectList(Wrappers.<ChallengeFile>lambdaQuery()
                 .eq(ChallengeFile::getChallengeId, challengeId));
 
-        // 2. 逐个删除对象存储内容，失败只告警
+        // 2. 逐个删除对象存储内容，失败保留元数据
         for (ChallengeFile file : files) {
-            removeObjectQuietly(file);
+            removeObject(file);
         }
 
         // 3. 清理元数据
@@ -266,7 +283,8 @@ public class FileStorageServiceImpl implements FileStorageService {
         if (file.getSize() > properties.getStorage().getMaxAttachmentBytes()) {
             throw new StorageException(ErrorCode.PAYLOAD_TOO_LARGE, "附件体积超过服务端限制");
         }
-        String extension = extensionOf(file.getOriginalFilename());
+        validateName(file);
+        String extension = extensionOf(safeName(file.getOriginalFilename()));
         if (!extension.isEmpty()
                 && properties.getStorage().getBlockedAttachmentExtensions().contains(extension)) {
             throw new StorageException(ErrorCode.UNSUPPORTED_FILE_TYPE, "禁止上传可执行文件类型：" + extension);
@@ -281,6 +299,8 @@ public class FileStorageServiceImpl implements FileStorageService {
         if (file.getSize() > properties.getStorage().getMaxCoverBytes()) {
             throw new StorageException(ErrorCode.PAYLOAD_TOO_LARGE, "封面体积超过 10MB 限制");
         }
+        validateName(file);
+        com.qaqxianyuqaq.backend.util.CoverValidator.validate(file);
         String contentType = file.getContentType() == null ? "" : file.getContentType().toLowerCase(Locale.ROOT);
         if (!properties.getStorage().getCoverContentTypes().contains(contentType)) {
             throw new StorageException(ErrorCode.UNSUPPORTED_FILE_TYPE,
@@ -294,6 +314,16 @@ public class FileStorageServiceImpl implements FileStorageService {
         String extension = extensionOf(file.getOriginalFilename());
         String storageKey = "challenges/" + challenge.getCode() + "/" + kind.apiValue() + "/" + fileId
                 + (extension.isEmpty() ? "" : "." + extension);
+        // 新对象与数据库不是同一资源事务，回滚时登记精确清理任务，不删除已有文件。
+        org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override public void afterCompletion(int status) {
+                        if (status != STATUS_COMMITTED) {
+                            try { cleanup.enqueueRollback(storageKey); }
+                            catch(Exception error) { log.error("回滚对象需人工重试清理，key={}",storageKey,error); }
+                        }
+                    }
+                });
         try {
             MinioUtil.ensureBucket(minioClient, properties.getMinio().getBucket());
             try (var stream = file.getInputStream()) {
@@ -319,15 +349,31 @@ public class FileStorageServiceImpl implements FileStorageService {
         return entity;
     }
 
-    /** 删除对象，失败仅记录告警，避免影响元数据清理。 */
-    private void removeObjectQuietly(ChallengeFile file) {
+    /** 删除失败时中止事务，保留元数据以支持恢复后重试。 */
+    private void removeObject(ChallengeFile file) {
         try {
             MinioUtil.removeObject(minioClient, properties.getMinio().getBucket(), file.getStorageKey());
         } catch (Exception exception) {
-            log.warn("删除对象失败，已忽略: key={}, reason={}", file.getStorageKey(), exception.getMessage());
+            throw new StorageException(ErrorCode.STORAGE_ERROR, "对象存储删除失败，文件记录已保留，请重试");
         }
     }
 
+    /** 在所有上传入口及批量整体校验阶段检查数据库和 HTTP 文件名边界。 */
+    private void validateName(MultipartFile file) {
+        String name=safeName(file.getOriginalFilename());
+        String extension=extensionOf(name);
+        if(name.isBlank() || name.equals(".") || name.equals("..")
+                || name.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>255
+                || name.chars().anyMatch(Character::isISOControl)
+                || (!extension.isEmpty() && !extension.matches("[a-z0-9]{1,24}")))
+            throw new ValidationFailedException("file", "文件名最多 255 个 UTF-8 字节，扩展名最多 24 位英数，不能包含控制字符");
+        if(file.getContentType()!=null && (file.getContentType().length()>128 || file.getContentType().chars().anyMatch(Character::isISOControl)))
+            throw new ValidationFailedException("file", "文件类型无效");
+        try {
+            if(file.getContentType()!=null && !org.springframework.http.MediaType.parseMediaType(file.getContentType()).isConcrete())
+                throw new IllegalArgumentException();
+        } catch(IllegalArgumentException error) { throw new ValidationFailedException("file", "文件类型格式无效"); }
+    }
     /** 取小写扩展名。 */
     private String extensionOf(String filename) {
         if (filename == null) {

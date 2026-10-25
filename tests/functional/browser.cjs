@@ -1,0 +1,34 @@
+const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('/browser/node_modules/playwright-core')
+const out={checks:[],errors:[],requests:[]},origin='https://localhost:17543'
+const cfg=Object.fromEntries(fs.readFileSync('/work/private/infra.env','utf8').trim().split('\n').map(s=>{const i=s.indexOf('=');return[s.slice(0,i),s.slice(i+1)]}))
+const fixtures=JSON.parse(fs.readFileSync('/work/private/fixtures.json','utf8'))
+async function check(name,fn){try{await fn();out.checks.push({name,status:'PASS'});console.log('PASS '+name)}catch(e){out.checks.push({name,status:'FAIL',detail:e.message});console.log('FAIL '+name+' '+e.message)}fs.writeFileSync('/out/ui-results.json',JSON.stringify(out,null,2))}
+async function login(page,username,password){await page.goto(origin+'/?view=login');await page.locator('#login-name').fill(username);await page.locator('#login-password').fill(password);await page.locator('.login-submit').click();await page.waitForFunction(()=>!document.querySelector('.login-form'),undefined,{timeout:20000})}
+;(async()=>{
+ const browser=await chromium.launch({executablePath:'/opt/google/chrome/chrome',headless:true,args:['--no-sandbox','--disable-dev-shm-usage']})
+ const context=await browser.newContext({ignoreHTTPSErrors:false,acceptDownloads:true,viewport:{width:1440,height:1000},reducedMotion:'reduce'})
+ const page=await context.newPage();page.on('pageerror',e=>out.errors.push(e.message));page.on('response',r=>{if(r.url().includes('/api/v1/'))out.requests.push({path:new URL(r.url()).pathname,status:r.status()})})
+ const code='UI-'+Date.now().toString(36).toUpperCase(),title='浏览器真实上传 '+code
+ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64')
+ let frame,player,downloads=[]
+ try{
+ await check('管理员真实表单登录与iframe后台',async()=>{await login(page,cfg.TQ_ADMIN_USERNAME,cfg.TQ_ADMIN_PASSWORD);await page.goto(origin+'/?view=admin');frame=page.frameLocator('.admin-frame');await frame.locator('#view-overview.active').waitFor();await frame.locator('#metric-challenges').waitFor({state:'attached',timeout:1000}).catch(()=>{});await page.screenshot({path:'/out/ui-admin.png',fullPage:true})})
+ await check('后台创建题目、自定义类别难度、三附件与PNG封面保存',async()=>{
+  await frame.locator('button[data-view="challenges"]').click();await frame.locator('#view-challenges.active .primary').click()
+  await frame.locator('#f-title').fill(title);await frame.locator('#f-code').fill(code);await frame.locator('#f-desc').fill('Docker浏览器创建，三个附件与一个PNG封面。');await frame.locator('#f-answer').fill('Flag{BrowserOnly}')
+  await frame.locator('#f-category').selectOption('__custom__');await frame.locator('#f-category-custom').fill('浏览器验收');await frame.locator('#f-difficulty').selectOption('__custom__');await frame.locator('#f-difficulty-custom').fill('真实测试')
+  if(!await frame.locator('#f-publish').isChecked())await frame.locator('.publish-switch').click();assert.equal(await frame.locator('#f-publish').isChecked(),true);await frame.locator('#challenge-files').setInputFiles([1,2,3].map(n=>({name:'browser-'+n+'.txt',mimeType:'text/plain',buffer:Buffer.from('real browser file '+n)})))
+  await frame.locator('#cover-file-input').setInputFiles({name:'browser-cover.png',mimeType:'image/png',buffer:png});await page.screenshot({path:'/out/ui-editor.png',fullPage:true})
+  await frame.locator('#challenge-form button[type="submit"]').click();await frame.locator('#view-challenges.active').waitFor({timeout:30000});await frame.getByText(title,{exact:true}).waitFor()
+  fixtures.ui={code,title};fs.writeFileSync('/work/private/fixtures.json',JSON.stringify(fixtures),{mode:0o600})
+ })
+ await check('后台刷新后文件、封面与题目信息仍存在',async()=>{await page.reload();frame=page.frameLocator('.admin-frame');await frame.locator('button[data-view="challenges"]').click();await frame.locator('#challenge-search').fill(code);await frame.locator('#challenge-rows button').filter({hasText:'编辑'}).click();await frame.locator('.attachment-item').first().waitFor();assert.equal(await frame.locator('.attachment-item').count(),3);assert.equal(await frame.locator('#f-code').inputValue(),code);assert.ok(await frame.locator('#cover-preview-image').evaluate(img=>img.complete?img.naturalWidth>0:new Promise(resolve=>{img.onload=()=>resolve(img.naturalWidth>0);img.onerror=()=>resolve(false)})));await page.screenshot({path:'/out/ui-editor-restored.png',fullPage:true})})
+ const ctx=await browser.newContext({ignoreHTTPSErrors:false,acceptDownloads:true,viewport:{width:1440,height:1000},reducedMotion:'reduce'});player=await ctx.newPage();player.on('pageerror',e=>out.errors.push(e.message));player.on('download',d=>downloads.push(d))
+ await check('独立选手浏览器登录、跨会话封面与附件元数据',async()=>{await login(player,fixtures.users.find(x=>x.name==='A').username,fixtures.password);await player.goto(origin+'/?view=detail&code='+code);await player.locator('.answer-panel').waitFor();assert.equal(await player.locator('.resource-count b').innerText(),'03');await player.screenshot({path:'/out/ui-detail.png',fullPage:true})})
+ await check('资料夹点击触发全部三个文件的实际下载与内容核对',async()=>{await player.getByRole('button',{name:'打开题目附件',exact:true}).click();await player.waitForTimeout(3500);assert.equal(downloads.length,3,'实际下载数量 '+downloads.length);for(const d of downloads){assert.equal(await d.failure(),null);const n=d.suggestedFilename().match(/browser-([123])/);assert.ok(n,'下载名称不是原始文件名：'+d.suggestedFilename());assert.equal(fs.readFileSync(await d.path(),'utf8'),'real browser file '+n[1])}await player.waitForFunction(()=>!document.querySelector('.download-toast'));})
+ await check('选手正确提交显示得分、名次和完成态，刷新保持',async()=>{await player.locator('#answer-input').fill('Flag{BrowserOnly}');await player.locator('.submit-button').click();await player.locator('.completion-panel').waitFor();assert.match(await player.locator('.completion-stats').innerText(),/400/);await player.reload();await player.locator('.completion-panel').waitFor();assert.equal(await player.locator('#answer-input').count(),0);await player.screenshot({path:'/out/ui-completed.png',fullPage:true})})
+ await check('选手记录、进度与完成卡片由服务端恢复',async()=>{await player.goto(origin+'/?view=history');await player.getByText(title,{exact:true}).waitFor();await player.goto(origin+'/?view=tasks');await player.getByText(title,{exact:true}).waitFor();assert.ok((await player.locator('.task-card').filter({hasText:title}).innerText()).includes('恭喜完成'));await player.screenshot({path:'/out/ui-tasks.png',fullPage:true})})
+ await check('选手直接进入后台被阻止',async()=>{await player.goto(origin+'/?view=admin');await player.waitForTimeout(1000);assert.equal(await player.locator('.admin-frame').count(),0)})
+ await check('浏览器无未捕获JS异常',()=>assert.deepEqual(out.errors,[]))
+ }finally{fs.writeFileSync('/out/ui-results.json',JSON.stringify(out,null,2));await browser.close()}
+})().catch(e=>{console.error(e.message);process.exitCode=1})

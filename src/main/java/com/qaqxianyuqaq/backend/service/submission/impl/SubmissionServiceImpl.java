@@ -42,6 +42,7 @@ import com.qaqxianyuqaq.backend.util.PageUtil;
 import com.qaqxianyuqaq.backend.util.TimeUtil;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -88,7 +89,7 @@ public class SubmissionServiceImpl implements SubmissionService {
     }
 
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     @RateLimit(scope = "submission")
     @Idempotent(scope = "submission")
     public SubmissionResultVO submit(String code, SubmitAnswerDTO request,
@@ -176,7 +177,7 @@ public class SubmissionServiceImpl implements SubmissionService {
 
         // 6. 分页查询并批量装配题目信息
         IPage<Submission> page = submissionMapper.selectPage(new Page<>(query.page(), query.pageSize()), wrapper);
-        Map<String, Challenge> challenges = challengeMapper.selectBatchIds(
+        Map<String, Challenge> challenges = page.getRecords().isEmpty() ? Map.of() : challengeMapper.selectBatchIds(
                         page.getRecords().stream().map(Submission::getChallengeId).distinct().toList())
                 .stream().collect(Collectors.toMap(Challenge::getId, Function.identity()));
         List<SubmissionVO> items = page.getRecords().stream()
@@ -204,16 +205,13 @@ public class SubmissionServiceImpl implements SubmissionService {
                 .orderByAsc(Solve::getSolvedAt));
 
         // 3. 汇总累计分数
-        int score = solves.stream()
-                .mapToInt(solve -> (solve.getBasePoints() == null ? 0 : solve.getBasePoints())
-                        + (solve.getBonusPoints() == null ? 0 : solve.getBonusPoints()))
-                .sum();
+        int score = Math.toIntExact(solveMapper.selectTeamScore(event.getId(), team.getId()));
 
         // 4. 统计该赛事已发布题目总数，形成 x/y 进度
         long total = challengeMapper.selectCount(Wrappers.<Challenge>lambdaQuery()
                 .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED)
                 .eq(Challenge::getEventId, event.getId()));
-        Map<String, String> codeById = challengeMapper.selectBatchIds(
+        Map<String, String> codeById = solves.isEmpty() ? Map.of() : challengeMapper.selectBatchIds(
                         solves.stream().map(Solve::getChallengeId).distinct().toList())
                 .stream().collect(Collectors.toMap(Challenge::getId, Challenge::getCode));
         List<String> solvedCodes = solves.stream()
@@ -265,6 +263,10 @@ public class SubmissionServiceImpl implements SubmissionService {
                 .last("LIMIT 1"));
         if (existing == null) {
             return null;
+        }
+        if (!challenge.getId().equals(existing.getChallengeId()) || existing.getSource() != SolveSource.ANSWER
+                || !DigestUtil.sha256Hex(request.answer()).equals(existing.getAnswerDigest())) {
+            throw new ConflictException(ErrorCode.IDEMPOTENCY_CONFLICT, "requestId 已绑定其他题目、来源或答案");
         }
         String eventId = challenge.getEventId() == null
                 ? eventService.requireCurrent().getId() : challenge.getEventId();

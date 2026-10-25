@@ -65,6 +65,7 @@ class ScoringServiceImplTest {
                 "team_1", 0);
         challenge = new Challenge();
         challenge.setId("chal_1");
+        when(challengeMapper.lockForScoring("chal_1")).thenReturn("chal_1");
         challenge.setEventId("evt_1");
         challenge.setCode("GEO-01");
         challenge.setPoints(400);
@@ -94,6 +95,7 @@ class ScoringServiceImplTest {
         assertThat(result.pointsAwarded()).isEqualTo(500);
         assertThat(result.solvePlace()).isEqualTo(1);
         assertThat(result.progress().total()).isEqualTo(12);
+        verify(challengeMapper).lockForScoring("chal_1");
         verify(solveMapper).insert(any(Solve.class));
         verify(cacheService).deleteByPrefix(any());
     }

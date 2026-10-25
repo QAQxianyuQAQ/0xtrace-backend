@@ -12,6 +12,10 @@ FROM eclipse-temurin:25-jre-noble
 ENV TZ=Asia/Shanghai
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -Dfile.encoding=UTF-8"
 
+# 封面白名单格式必须实际解码，解码进程使用内存管道与资源上限。
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
 # 非 root 用户运行，降低容器逃逸风险
 RUN groupadd --system --gid 10001 tracequest \
  && useradd --system --uid 10001 --gid tracequest --home-dir /app --shell /usr/sbin/nologin tracequest

@@ -1,77 +1,75 @@
 package com.qaqxianyuqaq.backend.aspect;
-
 import com.qaqxianyuqaq.backend.security.SecurityUtils;
-import com.qaqxianyuqaq.backend.security.UserPrincipal;
 import com.qaqxianyuqaq.backend.service.cache.IdempotencyService;
+import com.qaqxianyuqaq.backend.domain.dto.submission.SubmitAnswerDTO;
+import com.qaqxianyuqaq.backend.domain.dto.submission.LocationVerificationDTO;
+import com.qaqxianyuqaq.backend.exception.ValidationFailedException;
 import com.qaqxianyuqaq.backend.util.DigestUtil;
 import com.qaqxianyuqaq.backend.util.JsonUtil;
-import jakarta.servlet.http.HttpServletRequest;
 import org.aspectj.lang.ProceedingJoinPoint;
-import org.aspectj.lang.annotation.Around;
-import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.annotation.*;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
-
-import java.util.Optional;
-
-/**
- * 幂等切面。
- *
- * <p>读取 Idempotency-Key 请求头，命中历史记录时直接回放首次响应，避免重复计分。</p>
- */
-@Aspect
-@Component
-@Order(20)
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.context.request.*;
+import java.util.*;
+/** 数据库唯一键认领、业务和响应快照同事务提交；进程退出自动回滚占位。 */
+@Aspect @Component @Order(20)
 public class IdempotentAspect {
-
-    /** 幂等键请求头名称，与契约 8.1 一致。 */
-    private static final String IDEMPOTENCY_HEADER = "Idempotency-Key";
-
-    private final IdempotencyService idempotencyService;
-
-    public IdempotentAspect(IdempotencyService idempotencyService) {
-        this.idempotencyService = idempotencyService;
+    private final IdempotencyService service;
+    private final TransactionTemplate transaction;
+    public IdempotentAspect(IdempotencyService service, PlatformTransactionManager manager) {
+        this.service=service;
+        transaction=new TransactionTemplate(manager);
+        transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+        transaction.setTimeout(30);
     }
-
-    /** 环绕通知：按需回放或记录响应快照。 */
     @Around("@annotation(idempotent)")
-    public Object apply(ProceedingJoinPoint joinPoint, Idempotent idempotent) throws Throwable {
-        String idempotencyKey = header(IDEMPOTENCY_HEADER);
-        if (idempotencyKey == null || idempotencyKey.isBlank()) {
-            // 未携带幂等键时按普通请求处理，业务侧仍可用 requestId 兜底
-            return joinPoint.proceed();
+    public Object apply(ProceedingJoinPoint point, Idempotent idempotent) throws Throwable {
+        String header=null, bodyId=null;
+        if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes)
+            header=attributes.getRequest().getHeader("Idempotency-Key");
+        for (Object arg : point.getArgs()) {
+            if (arg instanceof SubmitAnswerDTO answer) bodyId=answer.requestId();
+            if (arg instanceof LocationVerificationDTO location) bodyId=location.requestId();
         }
-        UserPrincipal principal = SecurityUtils.currentPrincipalOrNull();
-        String userId = principal == null ? "" : principal.userId();
-        String requestHash = DigestUtil.sha256Hex(JsonUtil.toJson(joinPoint.getArgs()));
-
-        // 1. 命中历史记录时直接回放首次响应
-        Optional<String> cached = idempotencyService.findResponse(idempotent.scope(), idempotencyKey, userId,
-                requestHash);
-        MethodSignature signature = (MethodSignature) joinPoint.getSignature();
-        if (cached.isPresent()) {
-            Object replayed = JsonUtil.fromJson(cached.get(), signature.getReturnType());
-            if (replayed != null || signature.getReturnType() == void.class) {
-                return replayed;
+        Map<String,String> keys=new LinkedHashMap<>();
+        if (header!=null && !header.isBlank()) keys.put(idempotent.scope(),header);
+        if (bodyId!=null && !bodyId.isBlank()) keys.put("request",bodyId);
+        if (keys.isEmpty()) return point.proceed();
+        if (keys.values().stream().anyMatch(key -> key.length()>128 || key.chars().anyMatch(Character::isISOControl)))
+            throw new ValidationFailedException("Idempotency-Key", "幂等键最多 128 位且不能包含控制字符");
+        var principal=SecurityUtils.currentPrincipalOrNull();
+        String userId=principal==null?"":principal.userId();
+        // 账号由唯一键隔离；密码散列、会话版本和队伍缓存不属于请求内容。
+        Object[] arguments=Arrays.stream(point.getArgs())
+                .filter(arg -> !(arg instanceof com.qaqxianyuqaq.backend.security.UserPrincipal)).toArray();
+        String content=JsonUtil.toJson(arguments);
+        if(content==null) throw new IllegalStateException("幂等请求无法序列化");
+        String hash=DigestUtil.sha256Hex(idempotent.scope()+content);
+        Class<?> type=((MethodSignature)point.getSignature()).getReturnType();
+        return transaction.execute(status -> {
+            Optional<String> cached=Optional.empty();
+            for (var key: keys.entrySet()) {
+                Optional<String> candidate=service.findResponse(key.getKey(),key.getValue(),userId,hash);
+                if (candidate.isPresent()) cached=candidate;
             }
-        }
-
-        // 2. 未命中时执行目标方法，并把成功响应写入幂等记录
-        Object result = joinPoint.proceed();
-        idempotencyService.saveResponse(idempotent.scope(), idempotencyKey, userId, requestHash,
-                JsonUtil.toJson(result));
-        return result;
-    }
-
-    /** 读取当前请求头。 */
-    private String header(String name) {
-        if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes) {
-            HttpServletRequest request = attributes.getRequest();
-            return request.getHeader(name);
-        }
-        return null;
+            Object result;
+            if (cached.isPresent()) {
+                result=JsonUtil.fromJson(cached.get(),type);
+                if (result==null && type!=void.class) throw new IllegalStateException("幂等响应无法读取");
+            } else {
+                try { result=point.proceed(); }
+                catch (RuntimeException|Error failure) { throw failure; }
+                catch (Throwable failure) { throw new IllegalStateException("幂等业务执行失败",failure); }
+            }
+            String snapshot=JsonUtil.toJson(result);
+            if (snapshot==null && type!=void.class) throw new IllegalStateException("幂等响应无法序列化");
+            for (var key:keys.entrySet()) service.saveResponse(key.getKey(),key.getValue(),userId,hash,snapshot);
+            return result;
+        });
     }
 }

@@ -1,16 +1,12 @@
 package com.qaqxianyuqaq.backend.util;
 
 import io.minio.BucketExistsArgs;
-import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
-import io.minio.http.Method;
 
 import java.io.InputStream;
-import java.time.Duration;
-import java.util.concurrent.TimeUnit;
 
 /**
  * MinIO 对象存储工具。
@@ -19,8 +15,6 @@ import java.util.concurrent.TimeUnit;
  */
 public final class MinioUtil {
 
-    /** 预签名下载地址默认有效期，遵循短效原则。 */
-    public static final Duration DEFAULT_PRESIGN_TTL = Duration.ofMinutes(5);
 
     private MinioUtil() {
     }
@@ -44,20 +38,13 @@ public final class MinioUtil {
                 .build());
     }
 
-    /** 删除对象，删除失败由调用方决定是否忽略。 */
+    /** 只通过服务端身份读取对象，不向客户端暴露可转发的签名地址。 */
+    public static InputStream getObject(MinioClient client,String bucket,String key,long offset,long length) throws Exception {
+        return client.getObject(io.minio.GetObjectArgs.builder().bucket(bucket).object(key).offset(offset).length(length).build());
+    }
+    /** 删除对象，删除失败由调用方处理。 */
     public static void removeObject(MinioClient client, String bucket, String storageKey) throws Exception {
         client.removeObject(RemoveObjectArgs.builder().bucket(bucket).object(storageKey).build());
     }
 
-    /** 生成短效预签名下载地址，供选手下载附件时重定向。 */
-    public static String presignedGetUrl(MinioClient client, String bucket, String storageKey, Duration ttl)
-            throws Exception {
-        Duration effective = ttl == null ? DEFAULT_PRESIGN_TTL : ttl;
-        return client.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
-                .method(Method.GET)
-                .bucket(bucket)
-                .object(storageKey)
-                .expiry((int) effective.toSeconds(), TimeUnit.SECONDS)
-                .build());
-    }
 }

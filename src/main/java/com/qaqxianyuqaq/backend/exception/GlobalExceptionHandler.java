@@ -71,6 +71,12 @@ public class GlobalExceptionHandler {
         return badRequest(List.of(new FieldErrorVO(exception.getParameterName(), "缺少必填参数")));
     }
 
+    /** 查询参数类型错误应由客户端修正，不能转成服务器异常。 */
+    @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorVO> handleTypeMismatch(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException exception) {
+        return badRequest(List.of(new FieldErrorVO(exception.getName(), "参数类型或数值范围不正确")));
+    }
+
     /** 处理请求体解析失败。 */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorVO> handleUnreadable(HttpMessageNotReadableException exception) {
