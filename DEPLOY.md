@@ -1,32 +1,80 @@
-# 部署到 Ubuntu 20.04（Docker Compose）
+# TraceQuest 单机 Docker 部署指南
 
-本文档描述把 TraceQuest 后端以 **单机 Docker Compose** 方式部署到 Ubuntu 20.04 的完整流程。
-宿主机不需要安装 JDK 25：Java 25 的编译与运行都发生在容器内（见 [`Dockerfile`](Dockerfile)）。
+> 更新时间：2026-10-28
+>
+> 适用架构：单台内网 Docker Engine + Docker Compose + 公网 frp 443
 
-## 1. 部署形态与前置条件
+本文描述 TraceQuest 后端当前的正式部署方式。项目只支持单台 Docker Engine 和单个应用实例，不支持 Kubernetes。
 
-编排文件 [`docker-compose.yml`](docker-compose.yml) 会拉起四个容器：
+## 1. 部署拓扑
+
+```text
+选手浏览器
+    │
+    ├── HTTPS/WSS :443
+    ▼
+公网 frps
+    │  仅允许出站连接
+    ▼
+内网 frpc
+    ├── tq.example.com      -> 127.0.0.1:8080 -> tracequest-backend
+    └── minio.example.com   -> 127.0.0.1:9000 -> tracequest-minio
+
+选手容器实例
+    └── tracequest-runtime 内部 Docker 网络
+```
+
+基础 Compose 容器：
 
 | 容器 | 作用 | 端口策略 |
-| --- | --- | --- |
-| `tracequest-backend` | 后端应用（Spring Boot，监听 8080） | 发布到宿主机 `${TQ_SERVER_PORT}`（默认 8080） |
-| `tracequest-mysql` | MySQL 8.0，唯一数据源 | 仅容器网络内可达，不发布端口 |
-| `tracequest-redis` | 限流计数、令牌黑名单、缓存 | 仅容器网络内可达，不发布端口 |
-| `tracequest-minio` | 附件与封面对象存储 | 发布 9000（S3 API）与 9001（控制台） |
+|---|---|---|
+| `tracequest-backend` | Spring Boot 应用 | 仅监听宿主机回环地址 8080 |
+| `tracequest-mysql` | MySQL 8.0，权威数据源 | 不发布宿主机端口 |
+| `tracequest-redis` | 缓存、限流、会话黑名单、分布式锁 | 不发布宿主机端口 |
+| `tracequest-minio` | 附件、封面等对象存储 | 仅监听宿主机回环地址 9000/9001 |
 
-建议配置：2 核 CPU / 4 GB 内存 / 20 GB 以上空闲磁盘（首次构建镜像需额外 3～5 GB，拉取 Maven 依赖与 JDK 25 基础镜像约 1.5～2 GB）。部署过程需要外网访问 Docker Hub、Maven 中央仓库与 apt 源。
+动态容器：
 
-> 单个应用实例已足够承载赛事使用；若要横向扩容或多副本，请改用 Kubernetes（见第 11 节）。
+- Docker 题目由后端通过宿主机 Docker Socket 创建。
+- 每个队伍同时只能运行一个题目容器。
+- 题目容器加入 `tracequest-runtime` 内部网络。
+- 容器默认存活 1 小时，剩余不超过 30 分钟时可延长 1 小时。
+- 选手只能通过 `/api/v1/challenge-connections` 的二进制 WSS 连接容器，不能直接访问容器 IP 或随机端口。
 
-## 2. 安装 Docker Engine 与 Compose 插件
+## 2. 前置条件
 
-Ubuntu 20.04 软件源里的 `docker.io` 版本较旧，建议使用 Docker 官方源安装：
+建议服务器配置：
+
+- 最低：2 核 CPU / 4 GB 内存 / 20 GB 可用磁盘。
+- 推荐：4 核 CPU / 8 GB 内存 / 50 GB 可用磁盘。
+- 题目容器会额外消耗内存、CPU、PID 和磁盘资源，资源上限通过 `.env` 调整。
+
+软件要求：
+
+- Ubuntu 22.04/24.04 或其他可安装 Docker Engine 的 Linux。
+- Docker Engine 24+。
+- Docker Compose v2。
+- 公网侧已部署可用的 frps。
+- 已准备两个域名，例如 `tq.example.com` 和 `minio.example.com`。
+
+网络要求：
+
+- 内网服务器可以访问 Docker Hub、Maven 中央仓库和系统软件源。
+- 内网 frpc 可以主动连接公网 frps。
+- 公网只需要开放 `22/tcp` 和 `443/tcp`；签发证书时可临时开放 `80/tcp`。
+- 不要向公网开放 `8080`、`9000`、`9001`、MySQL 或 Redis 端口。
+
+## 3. 安装 Docker Engine 与 Compose
+
+使用 Docker 官方软件源：
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y ca-certificates curl gnupg
 sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  -o /etc/apt/keyrings/docker.asc
 sudo chmod a+r /etc/apt/keyrings/docker.asc
 
 echo \
@@ -35,361 +83,445 @@ echo \
   sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo apt-get install -y \
+  docker-ce docker-ce-cli containerd.io \
+  docker-buildx-plugin docker-compose-plugin
 ```
 
-安装后确认版本，并把当前用户加入 `docker` 组（重新登录后生效，之后可省略 `sudo`）：
+验证：
 
 ```bash
-sudo docker compose version        # 需要 v2.x（支持 depends_on 健康检查条件）
+sudo docker version
+sudo docker compose version
 sudo docker run --rm hello-world
-sudo usermod -aG docker "$USER"
 ```
 
-注意事项：
-
-- 如果之前用 `snap` 装过 Docker（`snap list docker` 有输出），先 `sudo snap remove docker`，避免两个 CLI 互相干扰。
-- 若宿主机访问 Docker Hub 较慢，可配置镜像加速器：写入 `/etc/docker/daemon.json` 的 `registry-mirrors` 字段（地址请换成你自己可用的加速器），然后 `sudo systemctl restart docker`。
-
-## 3. 获取代码
+## 4. 获取项目
 
 ```bash
 sudo mkdir -p /opt/tracequest
 sudo chown "$USER":"$USER" /opt/tracequest
+
 git clone https://github.com/QAQxianyuQAQ/0xtrace-backend.git /opt/tracequest
 cd /opt/tracequest
 ```
 
-仓库当前是私有仓库，`git clone` 会要求鉴权，可用个人访问令牌（PAT）：
-`git clone https://<GitHub用户名>:<PAT>@github.com/QAQxianyuQAQ/0xtrace-backend.git /opt/tracequest`。
-这种写法会把令牌写进 `.git/config`，克隆完成后建议执行
-`git remote set-url origin https://github.com/QAQxianyuQAQ/0xtrace-backend.git` 清除。
-也可以直接把本地目录用 `rsync`/`scp` 上传到 `/opt/tracequest`，效果相同。
+如果仓库需要私钥认证，请使用 SSH Key 或 Git Credential Manager。不要把 GitHub PAT 写进仓库地址或 `.git/config`。
 
-## 4. 准备环境变量文件
-
-所有凭据只从 `.env` 读取，仓库内不保存任何真实密钥：
+## 5. 准备环境变量
 
 ```bash
 cd /opt/tracequest
 cp .env.deploy.example .env
 chmod 600 .env
-
-openssl rand -base64 48   # 执行 4 次，分别填入 TQ_JWT_SECRET、TQ_ANSWER_SECRET、TQ_DB_PASSWORD、TQ_MINIO_SECRET_KEY
-openssl rand -base64 24   # 执行 2 次，分别填入 TQ_DB_ROOT_PASSWORD、TQ_REDIS_PASSWORD
 ```
 
-必填项一览：
-
-| 变量 | 说明 |
-| --- | --- |
-| `TQ_DB_PASSWORD` / `TQ_DB_ROOT_PASSWORD` | MySQL 应用账号与 root 口令 |
-| `TQ_REDIS_PASSWORD` | Redis 口令（不可为空） |
-| `TQ_MINIO_ACCESS_KEY` / `TQ_MINIO_SECRET_KEY` | MinIO 凭据，其中 secret 至少 8 位（MinIO 自身限制） |
-| `TQ_MINIO_ENDPOINT` | **必须是浏览器可直接访问的地址**，如 `http://<服务器IP>:9000` 或 `https://minio.example.com`；附件下载会 302 跳转到用它生成的预签名地址 |
-| `TQ_JWT_SECRET` / `TQ_ANSWER_SECRET` | JWT 签名密钥与题目答案 AES-GCM 加密密钥，≥32 字节随机值 |
-| `TQ_ADMIN_PASSWORD` | 管理员口令。**即使关闭初始化装配，生产强校验也会校验它**，请填 ≥16 位强口令 |
-
-另外确认宿主机端口未被占用：
+生成密钥：
 
 ```bash
-ss -lntp | grep -E ':8080|:9000|:9001' || echo "端口空闲"
+openssl rand -base64 48  # TQ_JWT_SECRET
+openssl rand -base64 48  # TQ_ANSWER_SECRET
+openssl rand -base64 32  # TQ_DB_PASSWORD
+openssl rand -base64 32  # TQ_DB_ROOT_PASSWORD
+openssl rand -base64 32  # TQ_REDIS_PASSWORD
+openssl rand -base64 32  # TQ_MINIO_ACCESS_KEY
+openssl rand -base64 48  # TQ_MINIO_SECRET_KEY
+openssl rand -base64 32  # TQ_ADMIN_PASSWORD
 ```
 
-## 5. 首次启动（自动建表 + 创建管理员）
+关键变量：
 
-应用启动时不会自动改表，建表脚本由 MySQL 容器**首次初始化数据卷时**执行
-（按顺序挂载 [`V1__init_schema.sql`](src/main/resources/sql/V1__init_schema.sql) 与
-[`V2__event_scoped_teams.sql`](src/main/resources/sql/V2__event_scoped_teams.sql)）。
-管理员账号通过「只开启一次的初始化数据装配」创建，这也是项目推荐的首次初始化方式：
+| 变量 | 说明 |
+|---|---|
+| `TQ_IMAGE` | 应用镜像名称 |
+| `TQ_SERVER_PORT` | 后端回环端口，默认 8080 |
+| `TQ_DOCKER_GID` | 宿主机 Docker Socket 的组 ID |
+| `TQ_DB_*` | MySQL 地址、账号、密码与数据库名 |
+| `TQ_REDIS_*` | Redis 地址、密码 |
+| `TQ_MINIO_ENDPOINT` | 必须是浏览器可访问的 MinIO 公网地址，例如 `https://minio.example.com` |
+| `TQ_MINIO_ACCESS_KEY` | MinIO 访问密钥 |
+| `TQ_MINIO_SECRET_KEY` | MinIO 私钥 |
+| `TQ_JWT_SECRET` | JWT 签名密钥 |
+| `TQ_ANSWER_SECRET` | 题目 Flag 的 AES-GCM 加密密钥 |
+| `TQ_ADMIN_PASSWORD` | 管理员初始密码 |
+| `TQ_COOKIE_SECURE` | 正式 HTTPS 环境必须为 `true` |
+| `TQ_ENFORCE_SAME_ORIGIN` | 正式环境必须为 `true` |
+| `TQ_PUBLIC_WSS_URL` | 公网 WSS 地址 |
+| `TQ_RUNTIME_NETWORK` | 题目容器内部网络，默认 `tracequest-runtime` |
+| `TQ_RUNTIME_INSTANCE_TTL` | 容器存活时间，默认 `1h` |
+| `TQ_RUNTIME_EXTENSION_DURATION` | 单次延长时间，默认 `1h` |
+| `TQ_RUNTIME_EXTENSION_WINDOW` | 允许延长的时间窗口，默认 `30m` |
+
+查看 Docker Socket 组 ID：
+
+```bash
+stat -c '%g' /var/run/docker.sock
+```
+
+把结果写入：
+
+```dotenv
+TQ_DOCKER_GID=<Socket组ID>
+```
+
+应用镜像以非 root UID 10001 运行，依靠补充组访问 Docker Socket。Docker Socket 等价于宿主机高权限接口，生产环境建议在前面增加只允许镜像拉取、容器创建、检查、停止和删除的 Docker Socket Proxy。
+
+## 6. 配置 frp 公网入口
+
+参考 [deploy/frp/frpc.toml.example](deploy/frp/frpc.toml.example)，配置两个 HTTPS 代理：
+
+```toml
+serverAddr = "frp.example.com"
+serverPort = 443
+
+auth.method = "token"
+auth.token = "<frp-token>"
+
+[[proxies]]
+name = "tracequest-api"
+type = "https"
+localIP = "127.0.0.1"
+localPort = 8080
+customDomains = ["tq.example.com"]
+
+[[proxies]]
+name = "tracequest-minio"
+type = "https"
+localIP = "127.0.0.1"
+localPort = 9000
+customDomains = ["minio.example.com"]
+```
+
+要求在 frps 侧完成：
+
+1. 为 `tq.example.com` 配置 TLS 证书。
+2. 为 `minio.example.com` 配置 TLS 证书。
+3. 将两个域名都解析到公网 frps。
+4. 只开放公网 443。
+5. 确保 HTTPS 代理透传 WebSocket Upgrade 请求。
+
+对应环境变量：
+
+```dotenv
+TQ_PUBLIC_WSS_URL=wss://tq.example.com/api/v1/challenge-connections
+TQ_MINIO_ENDPOINT=https://minio.example.com
+TQ_COOKIE_SECURE=true
+```
+
+MinIO 自身仍监听内部 9000，不会占用公网 443。公网由 frps 根据域名进行分流。
+
+## 7. 数据库迁移
+
+DDL 位于 `src/main/resources/sql/`：
+
+| 顺序 | 文件 | 内容 |
+|---|---|---|
+| 1 | `V1__init_schema.sql` | 基础表 |
+| 2 | `V2__event_scoped_teams.sql` | 赛事内队伍 |
+| 3 | `V3__challenge_container_runtime.sql` | Docker 题目与容器实例 |
+| 4 | `V4__container_ttl_and_team_limit.sql` | 每队单容器、TTL、随机端口约束 |
+
+### 7.1 全新数据库
+
+使用 `docker-compose.yml` 时，MySQL 首次初始化数据卷会自动按 V1–V4 顺序执行。
+
+MySQL 数据卷初始化完成后不会再次执行这些脚本。不要通过删除整个数据卷来升级已有环境。
+
+### 7.2 已有数据库
+
+只执行尚未应用的迁移，且必须保持顺序。例如：
 
 ```bash
 cd /opt/tracequest
-# 临时允许初始化数据装配（创建默认管理员与一条 open 状态的赛事记录）
-sed -i 's/^TQ_BOOTSTRAP_ENABLED=.*/TQ_BOOTSTRAP_ENABLED=true/; s/^TQ_STRICT_SECRET_CHECK=.*/TQ_STRICT_SECRET_CHECK=false/' .env
 
-# 首次构建镜像并启动全部容器（构建约 5～10 分钟）
+docker compose exec -T mysql sh -c \
+  'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' \
+  < src/main/resources/sql/V2__event_scoped_teams.sql
+
+docker compose exec -T mysql sh -c \
+  'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' \
+  < src/main/resources/sql/V3__challenge_container_runtime.sql
+
+docker compose exec -T mysql sh -c \
+  'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' \
+  < src/main/resources/sql/V4__container_ttl_and_team_limit.sql
+```
+
+如果 V1 尚未执行或数据库为空，先执行 V1。
+
+## 8. 首次启动
+
+首次启动需要临时创建管理员：
+
+```bash
+cd /opt/tracequest
+
+sed -i \
+  's/^TQ_BOOTSTRAP_ENABLED=.*/TQ_BOOTSTRAP_ENABLED=true/; s/^TQ_STRICT_SECRET_CHECK=.*/TQ_STRICT_SECRET_CHECK=false/' \
+  .env
+
+docker compose config --quiet
 docker compose up -d --build
-
 docker compose ps
 docker compose logs -f app
 ```
 
-在日志中看到以下两行即表示初始化完成：
+首次构建会：
 
-```
+1. 拉取 Maven + JDK 25 和 JRE 25 镜像。
+2. 编译 Java 25 项目。
+3. 在运行镜像中安装 Docker CLI。
+4. 启动应用、MySQL、Redis 和 MinIO。
+5. 初始化数据库表。
+6. 创建管理员和默认赛事。
+7. 加入 `tracequest-runtime` 内部网络。
+
+看到以下日志表示初始化完成：
+
+```text
 已创建默认管理员账号: admin
 已创建默认赛事: TraceQuest Season 01
 ```
 
-> 为什么要临时关掉强校验：`TQ_STRICT_SECRET_CHECK=true` 时，只要初始化装配仍为开启状态，应用会按“生产环境”标准直接拒绝启动（这是设计上的保护，避免把开发默认账号带上线）。
+## 9. 验证
 
-## 6. 验证部署
+### 9.1 健康检查
 
 ```bash
-# 1) 存活探针（该接口公开、无需鉴权）
 curl -s http://127.0.0.1:8080/api/v1/health
-# => 形如 {"ok":true,"service":"tracequest-backend"}
-
-# 2) 登录（写请求必须带 Origin 头，且其主机名要与请求 Host 一致，否则返回 403 ORIGIN_REJECTED）
-curl -i -c /tmp/tq-cookie.txt -X POST http://127.0.0.1:8080/api/v1/auth/login \
-  -H 'Content-Type: application/json' -H 'Origin: http://127.0.0.1:8080' \
-  -d '{"username":"admin","password":"<TQ_ADMIN_PASSWORD>"}'
-
-# 3) 用登录得到的 Cookie 访问后台接口
-curl -s -b /tmp/tq-cookie.txt -H 'Origin: http://127.0.0.1:8080' \
-  http://127.0.0.1:8080/api/v1/admin/dashboard
-
-# 4) 确认 MinIO 存储桶已创建
-docker compose logs app | grep "存储桶已就绪"
 ```
 
-## 7. 切换到正式运行模式
+预期：
 
-管理员创建完成后，关闭初始化装配并打开生产强校验：
+```json
+{"ok":true,"service":"tracequest-backend"}
+```
+
+### 9.2 管理员登录
+
+```bash
+curl -i -c /tmp/tq-cookie.txt \
+  -X POST http://127.0.0.1:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -H 'Origin: http://127.0.0.1:8080' \
+  -d '{"username":"admin","password":"<管理员密码>"}'
+```
+
+### 9.3 后台接口
+
+```bash
+curl -s -b /tmp/tq-cookie.txt \
+  -H 'Origin: http://127.0.0.1:8080' \
+  http://127.0.0.1:8080/api/v1/admin/dashboard
+```
+
+### 9.4 Docker 运行时网络
+
+```bash
+docker network inspect tracequest-runtime
+docker inspect tracequest-backend \
+  --format '{{json .NetworkSettings.Networks}}'
+```
+
+应用容器和后续创建的题目容器都必须位于 `tracequest-runtime`。
+
+## 10. 切换到正式运行
+
+管理员创建完成后，恢复生产开关：
 
 ```bash
 cd /opt/tracequest
-sed -i 's/^TQ_BOOTSTRAP_ENABLED=.*/TQ_BOOTSTRAP_ENABLED=false/; s/^TQ_STRICT_SECRET_CHECK=.*/TQ_STRICT_SECRET_CHECK=true/' .env
-docker compose up -d app      # 只重建并重启应用容器
-docker compose logs -f app
-```
 
-强校验开启后，密钥缺失、长度不足 16 位、命中示例值清单，或初始化装配仍为 `true`，都会导致启动失败（fail-fast）。这正是上线前的最后一道体检。
+sed -i \
+  's/^TQ_BOOTSTRAP_ENABLED=.*/TQ_BOOTSTRAP_ENABLED=false/; s/^TQ_STRICT_SECRET_CHECK=.*/TQ_STRICT_SECRET_CHECK=true/' \
+  .env
 
-## 8. 配置反向代理与 HTTPS（推荐）
-
-两类场景需要 HTTPS：浏览器从 `https` 页面访问、以及 Cookie 需要 `Secure` 属性。
-下面是 Nginx + Let's Encrypt 的做法，同时反代应用与 MinIO（MinIO 走独立子域，不要用路径前缀，否则预签名地址会失效）。
-
-```bash
-sudo apt-get install -y nginx certbot python3-certbot-nginx
-```
-
-```nginx
-# /etc/nginx/sites-available/tracequest
-server {
-    listen 80;
-    server_name tq.example.com minio.example.com;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name tq.example.com;
-
-    ssl_certificate     /etc/letsencrypt/live/tq.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/tq.example.com/privkey.pem;
-
-    client_max_body_size 64m;          # 需大于应用侧上传上限（spring.servlet.multipart 为 50MB/60MB）
-
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        # 必须透传浏览器原始 Host：同源校验比较的是 Origin 主机名与 Host 头
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-
-server {
-    listen 443 ssl http2;
-    server_name minio.example.com;
-
-    ssl_certificate     /etc/letsencrypt/live/minio.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/minio.example.com/privkey.pem;
-
-    client_max_body_size 64m;
-    ignore_invalid_headers off;        # 透传 MinIO 的签名请求头，避免签名校验失败
-
-    location / {
-        proxy_pass http://127.0.0.1:9000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-```
-
-```bash
-sudo ln -s /etc/nginx/sites-available/tracequest /etc/nginx/sites-enabled/tracequest
-sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d tq.example.com -d minio.example.com
-```
-
-同时修改 `.env` 并重启应用：
-
-```bash
-sed -i 's#^TQ_MINIO_ENDPOINT=.*#TQ_MINIO_ENDPOINT=https://minio.example.com#' .env
-sed -i 's/^TQ_COOKIE_SECURE=.*/TQ_COOKIE_SECURE=true/' .env
 docker compose up -d app
+docker compose logs -f app --tail=200
 ```
 
-可选补丁：`TQ_MINIO_ENDPOINT` 用了公网域名后，应用容器需要能解析并回连该域名。若云主机不支持从容器回环访问自身公网 IP，可在 `docker-compose.yml` 的 `app` 服务下加一行，让容器把该域名指向宿主机（需要 Docker 20.10+）：
+强校验打开后，以下情况会导致应用拒绝启动：
 
-```yaml
-    extra_hosts:
-      - "minio.example.com:host-gateway"
-```
+- 密钥缺失或过弱。
+- `TQ_BOOTSTRAP_ENABLED` 仍为 `true`。
+- JWT、Flag 加密密钥、管理员密码未正确注入。
 
-防火墙只放行必要端口（8080/9000/9001 建议仅对反向代理或内网开放）：
+## 11. Docker 题目运行检查
+
+创建并发布 Docker 题目后，可做以下检查：
+
+1. 镜像必须声明 TCP `EXPOSE` 端口。
+2. 后台启动容器后，容器状态应为 `READY`。
+3. 同一队伍再次启动其他题目容器应返回 `409`。
+4. 容器状态响应应包含 `expiresAt` 和 `remainingSeconds`。
+5. 剩余时间不超过 30 分钟时，延长接口应增加 1 小时。
+6. 到期后应由定时任务自动删除。
+7. 公网客户端只连接 WSS，不能直接访问容器地址。
+
+查看后端托管容器：
 
 ```bash
+docker ps \
+  --filter 'label=tracequest.managed=true' \
+  --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+```
+
+查看内部网络：
+
+```bash
+docker network inspect tracequest-runtime \
+  --format '{{range .Containers}}{{println .Name .IPv4Address}}{{end}}'
+```
+
+应用日志中不应出现 Flag 明文。数据库中的队伍 Flag 应为 AES-GCM 密文。
+
+## 12. 防火墙与来源校验
+
+公网防火墙建议：
+
+```bash
+sudo ufw default deny incoming
 sudo ufw allow 22/tcp
-sudo ufw allow 80,443/tcp
+sudo ufw allow 443/tcp
 sudo ufw enable
 ```
 
-前端如果部署在**另一个域名**（例如 `app.example.com` 调 `tq.example.com`），因为会话走 `SameSite=Strict` Cookie，需要把前端也放到同一站点下，或在 `.env` 中把前端来源加入白名单：
+不要放行：
 
-```bash
+- `8080`
+- `9000`
+- `9001`
+- MySQL
+- Redis
+
+前端建议与 API 使用同一公网域名，通过同域路径访问。当前 CORS 默认关闭，Cookie 使用 `SameSite=Strict`，因此不建议把前端和 API 部署成互不相关的跨站域名。
+
+若确需额外的同站来源，可配置：
+
+```dotenv
 TRACEQUEST_SECURITY_ALLOWED_ORIGINS=https://app.example.com
+TQ_ENFORCE_SAME_ORIGIN=true
 ```
 
-## 9. 日常运维
+## 13. 复用已有 MySQL / Redis / MinIO
+
+如果 MySQL、Redis、MinIO 已由其他 Docker Compose 项目维护：
+
+```bash
+docker compose -f docker-compose.app-only.yml up -d --build
+```
+
+使用前需要：
+
+1. 在 `.env` 填写已有中间件地址和凭据。
+2. 把 `TQ_MINIO_ENDPOINT` 设置为浏览器可访问的 MinIO 公网域名。
+3. 手动执行尚未应用的 V1–V4 迁移。
+4. 确保应用加入 `tracequest-runtime` 内部网络。
+5. 确保应用有 Docker Socket 访问权限。
+
+常见地址填写：
+
+| 已有中间件暴露方式 | 配置 |
+|---|---|
+| 发布到宿主机 `0.0.0.0` | 填宿主机内网 IP |
+| 只发布到宿主机 `127.0.0.1` | 使用 `host.docker.internal` |
+| 只在对方 Docker 网络内 | 将应用加入对方外部网络并填写容器服务名 |
+
+Redis 的键统一使用 `tq:` 前缀。共享 Redis 时应避免使用会随意驱逐键的 `maxmemory-policy`。
+
+MinIO 必须使用独立桶和独立凭据。`TQ_MINIO_ENDPOINT` 的 Host 必须与浏览器访问 MinIO 时的 Host 完全一致，否则预签名地址会出现 `SignatureDoesNotMatch`。
+
+## 14. 日常运维
 
 ```bash
 cd /opt/tracequest
 
-# 状态与日志
+# 状态
 docker compose ps
+docker ps --filter 'label=tracequest.managed=true'
+
+# 应用日志
 docker compose logs -f app --tail=200
 
 # 重启应用
 docker compose restart app
 
-# 升级：拉取新代码后只重建应用镜像（数据卷不动）
+# 升级代码
 git pull
 docker compose build app
 docker compose up -d app
 docker image prune -f
+```
 
-# 备份 MySQL（容器内已注入 MYSQL_ROOT_PASSWORD / MYSQL_DATABASE）
-docker compose exec -T mysql sh -c 'exec mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --default-character-set=utf8mb4 "$MYSQL_DATABASE"' > "backup-$(date +%F).sql"
+升级前先备份数据库和 `.env`。已有数据库升级时，还要按顺序执行新增迁移脚本。
 
-# 恢复 MySQL
-docker compose exec -T mysql sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' < backup-2026-10-14.sql
+## 15. 备份与恢复
 
-# 备份 MinIO 对象数据（卷名前缀取自 Compose 项目名，默认等于部署目录名）
-minio_vol=$(docker volume ls --format '{{.Name}}' | grep '_minio-data$' | head -1)
-docker run --rm -v "$minio_vol":/data:ro -v "$PWD:/backup" alpine \
+### 15.1 MySQL
+
+```bash
+docker compose exec -T mysql sh -c \
+  'exec mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --default-character-set=utf8mb4 "$MYSQL_DATABASE"' \
+  > "backup-$(date +%F).sql"
+```
+
+恢复：
+
+```bash
+docker compose exec -T mysql sh -c \
+  'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' \
+  < backup-2026-10-28.sql
+```
+
+### 15.2 MinIO
+
+```bash
+minio_volume=$(docker volume ls \
+  --format '{{.Name}}' | grep '_minio-data$' | head -1)
+
+docker run --rm \
+  -v "$minio_volume":/data:ro \
+  -v "$PWD:/backup" \
+  alpine \
   tar czf "/backup/minio-$(date +%F).tar.gz" -C /data .
 ```
 
-别忘了把 `.env` 也备份到安全位置（它保存了全部密钥），否则恢复数据后旧密文无法解密。
+### 15.3 必须备份 `.env`
 
-> Compose 项目名默认取部署目录名（本文按 `/opt/tracequest` 部署，命名卷即为 `tracequest_mysql-data` 等）。若在同一台机器上部署多套环境，可在每条命令前加 `COMPOSE_PROJECT_NAME=xxx`，或在 `.env` 中设置同名变量来固定项目名。
+`.env` 中包含 JWT 签名密钥和 Flag 的 AES-GCM 加密密钥。丢失 `TQ_ANSWER_SECRET` 后，已有题目密文无法恢复。
 
-## 10. 常见问题排查
+`.env` 必须保存在权限为 `600` 的安全位置，不得提交到 Git。
 
-| 现象 | 原因与处理 |
-| --- | --- |
-| 应用反复重启，日志出现 `检测到不安全的密钥配置，已拒绝启动` | 密钥缺失/过短/命中示例值清单，或 `TQ_BOOTSTRAP_ENABLED=true` 与强校验同时开启。按日志列出的问题逐项修正 `.env` |
-| 日志报 `Table 'tracequest.users' doesn't exist` | MySQL 数据卷不是空的，初始化脚本会被跳过。按 V1、V2 顺序手动导入 DDL；已有 V1 数据只执行 V2 |
-| 登录接口返回 200，但后续请求 401 | Cookie 没被浏览器保存：HTTP 环境需 `TQ_COOKIE_SECURE=false`，HTTPS 环境需 `true`；两者不匹配时会话会直接丢失 |
-| 写请求返回 403，响应体含 `ORIGIN_REJECTED` | 请求未带 `Origin` 头，或前后端不同源。反向代理要透传 `Host $host`；跨域前端需配置 `TRACEQUEST_SECURITY_ALLOWED_ORIGINS` |
-| 附件下载 302 到一个打不开的地址 | `TQ_MINIO_ENDPOINT` 用了容器内部地址（如 `http://minio:9000`）。它必须是浏览器可达地址，改完重启 app 容器 |
-| 日志出现 `MinIO 初始化失败，文件上传能力暂不可用` | 首次启动时 MinIO 尚未就绪。`docker compose restart app` 即可，应用会重新建桶（`TQ_MINIO_INIT=true`） |
-| 登录频繁返回 429 | 限流生效：登录接口默认每 IP 每分钟 10 次，失败 8 次后进入 15 分钟窗口（见 `application.yml` 的 `tracequest.rate-limit`） |
-| `docker compose up` 报变量未设置 | `.env` 里对应项为空。`${VAR:?}` 写法会在变量缺失时直接报错，这是刻意设计 |
+## 16. 常见问题
 
-## 11. 附：其它部署方式
+| 现象 | 处理 |
+|---|---|
+| `permission denied /var/run/docker.sock` | `TQ_DOCKER_GID` 与宿主机 Socket 组 ID 不一致；重新执行 `stat -c '%g' /var/run/docker.sock` |
+| 应用无法创建题目容器 | 检查 Docker Socket 挂载、`tracequest-runtime` 网络和应用日志 |
+| 题目镜像启动失败 | 确认镜像存在、`dockerImage:dockerTag` 正确并声明 TCP `EXPOSE` 端口 |
+| 同一队伍启动第二道题返回 `409` | 每队只允许一个运行容器；先调用摧毁接口 |
+| 无法延长容器 | 只有剩余时间不超过 30 分钟时可延长 |
+| WSS 握手失败 | 检查一次性票据、Origin、公网 frp 域名和 WebSocket Upgrade 透传 |
+| 附件下载 403 | `TQ_MINIO_ENDPOINT` 与浏览器访问 MinIO 的 Host 不一致 |
+| 登录后请求 401 | HTTPS 环境应设置 `TQ_COOKIE_SECURE=true`，HTTP 调试环境应设为 `false` |
+| 写请求返回 `ORIGIN_REJECTED` | 前端、frp 和 API 的 Host/Origin 不一致；保持同源并透传 Host |
+| MySQL 启动后提示表不存在 | 数据卷已存在时初始化脚本不会重跑，手动执行缺失的 V1–V4 迁移 |
+| 应用启动失败并提示密钥不安全 | 修复 `.env`，并确认生产环境 `TQ_BOOTSTRAP_ENABLED=false`、`TQ_STRICT_SECRET_CHECK=true` |
 
-不用 Compose，直接跑单容器（MySQL/Redis/MinIO 需自行准备）：
+## 17. 上线检查清单
 
-```bash
-docker build -t tracequest-backend:1.0.0 .
-docker run -d --name tracequest-backend -p 8080:8080 \
-  -e TQ_DB_HOST=<mysql地址> -e TQ_DB_USERNAME=tracequest -e TQ_DB_PASSWORD=<口令> -e TQ_DB_NAME=tracequest \
-  -e TQ_REDIS_HOST=<redis地址> -e TQ_REDIS_PASSWORD=<口令> \
-  -e TQ_MINIO_ENDPOINT=https://minio.example.com -e TQ_MINIO_ACCESS_KEY=<key> -e TQ_MINIO_SECRET_KEY=<secret> \
-  -e TQ_JWT_SECRET=<随机值> -e TQ_ANSWER_SECRET=<随机值> \
-  -e TQ_ADMIN_PASSWORD=<强口令> -e TQ_BOOTSTRAP_ENABLED=false -e TQ_STRICT_SECRET_CHECK=true \
-  -e TQ_COOKIE_SECURE=true \
-  tracequest-backend:1.0.0
-```
-
-Kubernetes：仓库 [`k8s/`](k8s) 目录已提供 ConfigMap、Secret 示例、Deployment（探针指向 `/api/v1/health`）、Service 与 HPA，镜像由 [`.github/workflows/release.yml`](.github/workflows/release.yml) 在打 `v*` 标签时推送到 GHCR。集群部署前请确认 Secret 中已补齐 `TQ_JWT_SECRET`、`TQ_ANSWER_SECRET`、`TQ_ADMIN_PASSWORD` 等全部密钥。
-
-## 12. 复用已有的 MySQL / Redis / MinIO
-
-如果宿主机上已经有其它 Compose 项目维护的 MySQL、Redis、MinIO，**不要用 [`docker-compose.yml`](docker-compose.yml) 再起一套**——那份编排是给「完全从零开始」准备的。复用已有中间件请改用 [`docker-compose.app-only.yml`](docker-compose.app-only.yml)，它只发布应用容器。
-
-### 12.1 什么情况复用、什么情况另起一套
-
-| 情况 | 建议 |
-| --- | --- |
-| 已有实例就是为本平台准备的，或希望数据只有一份、统一备份 | **复用**，用 `docker-compose.app-only.yml` |
-| 已有实例属于其它业务的生产库，不想混数据、怕相互影响 | 另起一套，用 `docker-compose.yml`（配合改端口） |
-| 已有 MySQL 不是 8.x，或不是 utf8mb4 | 另起一套 |
-| 赛事期间要求资源隔离（限流、慢查询互不干扰） | 另起一套 |
-
-复用的主要收益是省心：不用再管第二份数据库备份、不用重复占端口；代价是资源与故障域和别的业务共享。
-
-### 12.2 第一步：确认应用能否连上已有中间件
-
-```bash
-docker ps --format 'table {{.Names}}\t{{.Ports}}'
-ss -lntp | grep -E ':3306|:6379|:9000'
-```
-
-| 已有中间件的暴露方式 | `.env` 里怎么填 |
-| --- | --- |
-| 端口发布到 `0.0.0.0`（`0.0.0.0:3306->3306/tcp`） | `TQ_DB_HOST=<宿主机内网IP>`（Redis 同理填 `TQ_REDIS_HOST`） |
-| 只发布到 `127.0.0.1`（`127.0.0.1:3306->3306/tcp`） | `TQ_DB_HOST=host.docker.internal`（app-only 编排已配好 `extra_hosts` 映射） |
-| 完全没发布端口，只在对方容器网络内 | 加入对方网络：打开 app-only 文件底部的 `networks` 注释，把名称换成 `docker network ls` 里的网络名，`TQ_DB_HOST` 填对方 compose 的服务名（如 `mysql`） |
-
-同时把 `TQ_MINIO_ENDPOINT` 指向已有 MinIO 的**对外**地址（预签名地址就是用它生成的）。
-
-### 12.3 第二步：把建表脚本导入已有 MySQL
-
-应用不会自动改表（`spring.sql.init.mode=never`），复用别人的 MySQL 时要自己导入一次：
-
-```bash
-cd /opt/tracequest
-
-# 1) 建库与专用账号（utf8mb4；账号主机用 % 以允许来自容器的连接）
-docker exec -it <已有mysql容器名> mysql -uroot -p -e "
-CREATE DATABASE IF NOT EXISTS tracequest DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS 'tracequest'@'%' IDENTIFIED BY '<TQ_DB_PASSWORD>';
-GRANT ALL PRIVILEGES ON tracequest.* TO 'tracequest'@'%';
-FLUSH PRIVILEGES;"
-
-# 2) 导入 DDL
-docker exec -i <已有mysql容器名> sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" tracequest' \
-  < src/main/resources/sql/V1__init_schema.sql
-docker exec -i <已有mysql容器名> sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" tracequest' \
-  < src/main/resources/sql/V2__event_scoped_teams.sql
-```
-
-### 12.4 第三步：启动应用
-
-```bash
-cd /opt/tracequest
-cp .env.deploy.example .env      # 已有 .env 则只补 TQ_DB_HOST / TQ_REDIS_HOST 等几项
-chmod 600 .env
-
-# 首次启动仍需创建管理员：临时 TQ_BOOTSTRAP_ENABLED=true + TQ_STRICT_SECRET_CHECK=false
-docker compose -f docker-compose.app-only.yml up -d --build
-docker compose -f docker-compose.app-only.yml logs -f app
-```
-
-创建完管理员后再把这两项改回 `false` / `true`，执行 `docker compose -f docker-compose.app-only.yml up -d app`。
-后续的验证、反向代理、升级步骤与第 6～9 节完全一致，只把 `docker compose` 换成 `docker compose -f docker-compose.app-only.yml`。
-
-### 12.5 复用 Redis 的注意点
-
-- 应用的键统一带 `tq:` 前缀（见 `util/CacheKeys`），与同实例上的其它应用不会冲突，共享 DB 0 是安全的。
-- 想进一步隔离可指定库序号：在 compose 中给 app 增加 `SPRING_DATA_REDIS_DATABASE=1`（取值 0～15，**不要留空**，空值会导致绑定失败）。
-- 共享实例请确认 `maxmemory-policy` 不是 `allkeys-lru` / `allkeys-random`，并保证内存有余量：应用把**解题计分的分布式锁**与**登出令牌黑名单**放在 Redis 里，键被提前驱逐会导致锁失效或已登出的令牌复活。对这两个路径要求高的场景，建议单独实例。
-
-### 12.6 复用 MinIO 的注意点
-
-- 用**独立桶**（`TQ_MINIO_BUCKET`，默认 `tracequest`）和**独立凭据**，不要把已有实例的 root 凭据交给应用。
-- `TQ_MINIO_ENDPOINT` 必须与浏览器访问 MinIO 时使用的 Host 完全一致：MinIO 的 SigV4 签名覆盖 Host 头，地址不一致时预签名下载会返回 403 `SignatureDoesNotMatch`。
-- 凭据若没有建桶权限，请先手动建桶或设 `TQ_MINIO_INIT=false`；有权限时保持 `true`，应用启动会自动 `ensureBucket`。
-
-### 12.7 复用模式下的备份
-
-数据都在对方的实例里，备份沿用对方既有策略即可；本仓库这一侧只需要备份 `.env`（保存着 JWT/答案加密密钥，丢失后题库密文无法解密）。
+- [ ] 只存在一台 Docker Engine 和一个应用实例。
+- [ ] Docker Socket 仅授予应用运行所需权限。
+- [ ] `tracequest-runtime` 是内部网络。
+- [ ] 后端 8080 只绑定 `127.0.0.1`。
+- [ ] MinIO 9000/9001 只绑定 `127.0.0.1`。
+- [ ] 公网只开放 443。
+- [ ] frp 已透传 WebSocket Upgrade。
+- [ ] `TQ_PUBLIC_WSS_URL` 使用公网 WSS 域名。
+- [ ] `TQ_MINIO_ENDPOINT` 使用公网 HTTPS 域名。
+- [ ] V1–V4 数据库迁移已全部应用。
+- [ ] `.env` 权限为 `600`，未进入 Git。
+- [ ] 管理员初始化完成后关闭 `TQ_BOOTSTRAP_ENABLED`。
+- [ ] `TQ_STRICT_SECRET_CHECK=true`。
+- [ ] 20 个测试和 `/api/v1/health` 已验证。
+- [ ] 镜像、日志和数据库备份策略已配置。
