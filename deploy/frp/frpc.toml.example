@@ -1,24 +1,17 @@
-# TraceQuest 内网 frpc 示例：公网只开放 443，由不同域名区分 API/WSS 与 MinIO。
+# TraceQuest 内网 frpc 示例：443 专用于选手到内网题目容器的 WSS 转发。
+# REST API 与 MinIO 使用各自的公网端口，不经过这个 frp 代理。
 # 请将 serverAddr、serverPort、认证信息和域名替换为实际部署值。
 serverAddr = "frp.example.com"
 serverPort = 443
 auth.method = "token"
 auth.token = "<replace-with-frp-token>"
 
-# 后端 REST 与 WSS 共用同一域名，frp 的 HTTPS 代理会保留 WebSocket Upgrade 请求
+# 该域名在公网 443 上只用于题目容器 WebSocket；应用后端仍可单独开放 8080 提供 REST
 [[proxies]]
-name = "tracequest-api"
+name = "tracequest-wss"
 type = "https"
 localIP = "127.0.0.1"
 localPort = 8080
 customDomains = ["tq.example.com"]
 
-# MinIO 继续在容器和宿主机内部监听 9000，公网仍只使用 443
-[[proxies]]
-name = "tracequest-minio"
-type = "https"
-localIP = "127.0.0.1"
-localPort = 9000
-customDomains = ["minio.example.com"]
-
-# frps 侧需要为两个域名配置 TLS 证书；后端 TQ_MINIO_ENDPOINT 必须与 MinIO 公网域名完全一致。
+# 如需严格限制只有 WebSocket 路径可达，请在 8080 前增加路径级反向代理。

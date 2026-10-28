@@ -3,7 +3,7 @@
 > 适用版本：当前 `main` 工作区
 > 盘点日期：2026-10-28
 > API 根路径：`/api/v1`
-> 部署拓扑：单台 Docker Engine，公网只开放 443，由 frp 提供 REST、WSS 和 MinIO 域名转发
+> 部署拓扑：单台 Docker Engine；公网 443 专用于 frp 转发到内网题目容器的 WSS，REST 和 MinIO 可使用独立公网端口
 
 本文档以当前后端代码为准。旧版原型 API 和已废弃字段不应继续使用。
 

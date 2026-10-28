@@ -18,7 +18,7 @@
 | Cache Layer | **Redis** (challenges, competition metadata, leaderboards, sessions) |
 | Object Storage | **MinIO** (attachments, challenge files, avatars) |
 | Auth | **Spring Security + JWT** |
-| Deployment | **Docker** + **Kubernetes** |
+| Deployment | **Single-host Docker** (Docker Compose) |
 | CI/CD | Automated pipeline (build → test → image → deploy) |
 | Root Package | `com.qaqxianyuqaq.backend` |
 
@@ -42,6 +42,8 @@ Agents MUST comply with every rule below. Violations are treated as build failur
 9. **API prefix**: Every HTTP endpoint MUST begin with `/api/v1/`. No exceptions, including health checks and internal endpoints.
 10. **Auth**: Login and protected routes MUST use Spring Security + JWT. Do not invent a parallel auth mechanism.
 11. **File storage**: All binary/large-object persistence MUST go through MinIO. Do not write files to the local filesystem in production code paths.
+12. **Challenge containers**: Docker-backed challenges MUST run on the single supported Docker Engine, inject team-scoped flags through the configured environment variable, and connect clients through the authenticated TCP-over-WebSocket gateway. Never expose internal container IPs or raw host ports as public connection targets. Each team may own at most one running challenge container; containers expire after one hour and may only be extended by one hour while 30 minutes or less remain.
+13. **Flag ownership**: A Docker challenge submission MUST belong to the submitting team. A non-owner flag MUST be logged as a suspected collusion attempt and rejected with `FlagOwnerException`.
 
 ---
 
@@ -51,7 +53,7 @@ Agents MUST place new code according to this tree. Creating new top-level packag
 
 ```
 com.qaqxianyuqaq.backend
-├── config          // Spring, Security, Redis, MinIO, K8s-ready configuration
+├── config          // Spring, Security, Redis, MinIO, Docker runtime configuration
 ├── controller      // MVC "C" — HTTP boundary only
 ├── service         // Business logic interfaces
 │   └── impl        // Business logic implementations (step-wise CN comments required)
@@ -195,9 +197,10 @@ Examples that MUST be extracted:
   4. Integration tests (Testcontainers)
   5. Build Docker image
   6. Push image to registry
-  7. Deploy manifests to Kubernetes (staging → prod gated)
+  7. Deploy the single-host Docker Compose stack (production gate required)
 - **Docker**: Multi-stage builds; final image based on a slim JRE 25 runtime; non-root user.
-- **Kubernetes**: Deployments with liveness/readiness probes hitting `/api/v1/health`; ConfigMaps for config; Secrets for credentials; HPA for competition load spikes.
+- **Runtime host**: Exactly one Docker Engine and one application replica are supported. Challenge containers join the internal runtime network and do not publish public ports.
+- **Public edge**: Port 443 is reserved for the frp WSS bridge to internal challenge containers. Other services may expose independent public ports, such as REST on 8080 and MinIO on 9000.
 
 ---
 
@@ -230,7 +233,7 @@ When generating or editing code, agents MUST:
 - [ ] Spring Security + JWT used for auth
 - [ ] Files stored via MinIO
 - [ ] CI/CD pipeline config updated if needed
-- [ ] Dockerfile / K8s manifests consistent with changes
+- [ ] Dockerfile / Docker Compose files consistent with changes
 - [ ] Tests added or updated
 
 ---

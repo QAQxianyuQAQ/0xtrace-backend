@@ -79,9 +79,9 @@ services:
       MINIO_ROOT_PASSWORD: ${TQ_MINIO_SECRET_KEY:?请在 .env 中设置 TQ_MINIO_SECRET_KEY}
       TZ: Asia/Shanghai
     ports:
-      # MinIO 仅在宿主机回环地址监听 9000/9001，公网只通过 frp 的 443 域名访问
-      - "127.0.0.1:${TQ_MINIO_API_PORT:-9000}:9000"
-      - "127.0.0.1:${TQ_MINIO_CONSOLE_PORT:-9001}:9001"
+      # MinIO 可直接通过独立公网端口访问，预签名地址必须与实际公开端口一致
+      - "${TQ_MINIO_API_PORT:-9000}:9000"
+      - "${TQ_MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
     networks:
@@ -156,8 +156,8 @@ services:
       TQ_EVENT_NAME: ${TQ_EVENT_NAME:-TraceQuest Season 01}
       TQ_EVENT_TIMEZONE: ${TQ_EVENT_TIMEZONE:-Asia/Shanghai}
     ports:
-      # 后端仅供本机 frp/反向代理访问，公网不直接开放 8080
-      - "127.0.0.1:${TQ_SERVER_PORT:-8080}:8080"
+      # REST API 使用独立公网端口；443 只保留给题目容器 WSS 转发
+      - "${TQ_SERVER_PORT:-8080}:8080"
     volumes:
       # 生产环境建议使用受限 Docker Socket Proxy，而不是直接暴露完整 Docker API
       - /var/run/docker.sock:/var/run/docker.sock

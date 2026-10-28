@@ -2,7 +2,7 @@
 
 > 更新时间：2026-10-28
 >
-> 适用架构：单台内网 Docker Engine + Docker Compose + 公网 frp 443
+> 适用架构：单台内网 Docker Engine + Docker Compose；REST、MinIO 使用独立公网端口，公网 443 专用于题目容器 WSS
 
 本文描述 TraceQuest 后端当前的正式部署方式。项目只支持单台 Docker Engine 和单个应用实例，不支持 Kubernetes。
 
@@ -10,28 +10,31 @@
 
 ```text
 选手浏览器
-    │
-    ├── HTTPS/WSS :443
-    ▼
-公网 frps
-    │  仅允许出站连接
-    ▼
-内网 frpc
-    ├── tq.example.com      -> 127.0.0.1:8080 -> tracequest-backend
-    └── minio.example.com   -> 127.0.0.1:9000 -> tracequest-minio
-
-选手容器实例
-    └── tracequest-runtime 内部 Docker 网络
+    ├── REST :8080 ─────────────────────────► tracequest-backend
+    ├── MinIO :9000/9001 ───────────────────► tracequest-minio
+    └── WSS :443
+          ▼
+        公网 frps
+          │
+          ▼
+        内网 frpc
+          │
+          ▼
+        tracequest-backend
+          │ TCP
+          ▼
+        选手容器实例
+          └── tracequest-runtime 内部 Docker 网络
 ```
 
 基础 Compose 容器：
 
 | 容器 | 作用 | 端口策略 |
 |---|---|---|
-| `tracequest-backend` | Spring Boot 应用 | 仅监听宿主机回环地址 8080 |
+| `tracequest-backend` | Spring Boot 应用 | 默认开放宿主机 8080 提供 REST 和 WSS 网关 |
 | `tracequest-mysql` | MySQL 8.0，权威数据源 | 不发布宿主机端口 |
 | `tracequest-redis` | 缓存、限流、会话黑名单、分布式锁 | 不发布宿主机端口 |
-| `tracequest-minio` | 附件、封面等对象存储 | 仅监听宿主机回环地址 9000/9001 |
+| `tracequest-minio` | 附件、封面等对象存储 | 默认开放宿主机 9000/9001 |
 
 动态容器：
 
@@ -61,8 +64,10 @@
 
 - 内网服务器可以访问 Docker Hub、Maven 中央仓库和系统软件源。
 - 内网 frpc 可以主动连接公网 frps。
-- 公网只需要开放 `22/tcp` 和 `443/tcp`；签发证书时可临时开放 `80/tcp`。
-- 不要向公网开放 `8080`、`9000`、`9001`、MySQL 或 Redis 端口。
+- 公网 443 专用于 frp 的题目容器 WSS 转发。
+- REST API 默认使用公网 8080。
+- MinIO 默认使用公网 9000，控制台使用 9001。
+- MySQL 和 Redis 不发布公网端口。
 
 ## 3. 安装 Docker Engine 与 Compose
 
@@ -134,11 +139,11 @@ openssl rand -base64 32  # TQ_ADMIN_PASSWORD
 | 变量 | 说明 |
 |---|---|
 | `TQ_IMAGE` | 应用镜像名称 |
-| `TQ_SERVER_PORT` | 后端回环端口，默认 8080 |
+| `TQ_SERVER_PORT` | REST API 公网端口，默认 8080 |
 | `TQ_DOCKER_GID` | 宿主机 Docker Socket 的组 ID |
 | `TQ_DB_*` | MySQL 地址、账号、密码与数据库名 |
 | `TQ_REDIS_*` | Redis 地址、密码 |
-| `TQ_MINIO_ENDPOINT` | 必须是浏览器可访问的 MinIO 公网地址，例如 `https://minio.example.com` |
+| `TQ_MINIO_ENDPOINT` | 必须是浏览器可访问的 MinIO 公网地址，例如 `http://<服务器IP>:9000` |
 | `TQ_MINIO_ACCESS_KEY` | MinIO 访问密钥 |
 | `TQ_MINIO_SECRET_KEY` | MinIO 私钥 |
 | `TQ_JWT_SECRET` | JWT 签名密钥 |
@@ -166,9 +171,9 @@ TQ_DOCKER_GID=<Socket组ID>
 
 应用镜像以非 root UID 10001 运行，依靠补充组访问 Docker Socket。Docker Socket 等价于宿主机高权限接口，生产环境建议在前面增加只允许镜像拉取、容器创建、检查、停止和删除的 Docker Socket Proxy。
 
-## 6. 配置 frp 公网入口
+## 6. 配置 frp：公网 443 到题目容器 WSS
 
-参考 [deploy/frp/frpc.toml.example](deploy/frp/frpc.toml.example)，配置两个 HTTPS 代理：
+参考 [deploy/frp/frpc.toml.example](deploy/frp/frpc.toml.example)，公网 443 只配置题目容器 WebSocket 转发：
 
 ```toml
 serverAddr = "frp.example.com"
@@ -178,37 +183,30 @@ auth.method = "token"
 auth.token = "<frp-token>"
 
 [[proxies]]
-name = "tracequest-api"
+name = "tracequest-wss"
 type = "https"
 localIP = "127.0.0.1"
 localPort = 8080
 customDomains = ["tq.example.com"]
-
-[[proxies]]
-name = "tracequest-minio"
-type = "https"
-localIP = "127.0.0.1"
-localPort = 9000
-customDomains = ["minio.example.com"]
 ```
 
 要求在 frps 侧完成：
 
 1. 为 `tq.example.com` 配置 TLS 证书。
-2. 为 `minio.example.com` 配置 TLS 证书。
-3. 将两个域名都解析到公网 frps。
-4. 只开放公网 443。
-5. 确保 HTTPS 代理透传 WebSocket Upgrade 请求。
+2. 将 `tq.example.com` 解析到公网 frps。
+3. 确保 HTTPS 代理透传 WebSocket Upgrade 请求。
+4. 配置文件级反向代理时只允许 `/api/v1/challenge-connections`。
 
 对应环境变量：
 
 ```dotenv
 TQ_PUBLIC_WSS_URL=wss://tq.example.com/api/v1/challenge-connections
-TQ_MINIO_ENDPOINT=https://minio.example.com
-TQ_COOKIE_SECURE=true
+TQ_MINIO_ENDPOINT=http://<服务器IP>:9000
+# REST 直接使用 HTTP 8080 时为 false；REST 通过 HTTPS 端口/反向代理时为 true
+TQ_COOKIE_SECURE=false
 ```
 
-MinIO 自身仍监听内部 9000，不会占用公网 443。公网由 frps 根据域名进行分流。
+REST API 使用公网 8080，MinIO 使用公网 9000/9001。它们都不经过 frp 的 443 端口。
 
 ## 7. 数据库迁移
 
@@ -383,16 +381,19 @@ docker network inspect tracequest-runtime \
 sudo ufw default deny incoming
 sudo ufw allow 22/tcp
 sudo ufw allow 443/tcp
+sudo ufw allow 8080/tcp
+sudo ufw allow 9000/tcp
+sudo ufw allow 9001/tcp
 sudo ufw enable
 ```
 
-不要放行：
+端口用途：
 
-- `8080`
-- `9000`
-- `9001`
-- MySQL
-- Redis
+- `443`：仅用于 frp 的题目容器 WSS 转发。
+- `8080`：REST API。
+- `9000`：MinIO S3 API 和预签名下载。
+- `9001`：MinIO 管理控制台，可按需限制为管理员 IP。
+- MySQL 和 Redis 不发布公网端口。
 
 前端建议与 API 使用同一公网域名，通过同域路径访问。当前 CORS 默认关闭，Cookie 使用 `SameSite=Strict`，因此不建议把前端和 API 部署成互不相关的跨站域名。
 
@@ -414,7 +415,7 @@ docker compose -f docker-compose.app-only.yml up -d --build
 使用前需要：
 
 1. 在 `.env` 填写已有中间件地址和凭据。
-2. 把 `TQ_MINIO_ENDPOINT` 设置为浏览器可访问的 MinIO 公网域名。
+2. 把 `TQ_MINIO_ENDPOINT` 设置为浏览器可访问的 MinIO 公网地址和端口。
 3. 手动执行尚未应用的 V1–V4 迁移。
 4. 确保应用加入 `tracequest-runtime` 内部网络。
 5. 确保应用有 Docker Socket 访问权限。
@@ -513,12 +514,12 @@ docker run --rm \
 - [ ] 只存在一台 Docker Engine 和一个应用实例。
 - [ ] Docker Socket 仅授予应用运行所需权限。
 - [ ] `tracequest-runtime` 是内部网络。
-- [ ] 后端 8080 只绑定 `127.0.0.1`。
-- [ ] MinIO 9000/9001 只绑定 `127.0.0.1`。
-- [ ] 公网只开放 443。
+- [ ] REST API 在配置的公网端口 8080 可访问。
+- [ ] MinIO 在配置的公网端口 9000 可访问，9001 按需限制访问来源。
+- [ ] 公网 443 只用于题目容器 WSS 转发。
 - [ ] frp 已透传 WebSocket Upgrade。
 - [ ] `TQ_PUBLIC_WSS_URL` 使用公网 WSS 域名。
-- [ ] `TQ_MINIO_ENDPOINT` 使用公网 HTTPS 域名。
+- [ ] `TQ_MINIO_ENDPOINT` 使用浏览器实际访问的 MinIO 公网地址，默认包含 `:9000`。
 - [ ] V1–V4 数据库迁移已全部应用。
 - [ ] `.env` 权限为 `600`，未进入 Git。
 - [ ] 管理员初始化完成后关闭 `TQ_BOOTSTRAP_ENABLED`。
