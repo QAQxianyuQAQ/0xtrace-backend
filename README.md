@@ -36,7 +36,7 @@ java -jar target/backend-1.0.0-SNAPSHOT.jar --spring.profiles.active=prod
 > `mvnw` 与 `scripts/*.sh` 均为 Bash 脚本。若直接执行提示 `权限不够`，改用 `bash` 调用即可：
 > `bash mvnw -DskipTests package`、`bash scripts/scan-secrets.sh`；也可先 `chmod +x mvnw scripts/*.sh .githooks/pre-commit`。
 
-数据库脚本：新库按顺序执行 [`V1__init_schema.sql`](src/main/resources/sql/V1__init_schema.sql) 与 [`V2__event_scoped_teams.sql`](src/main/resources/sql/V2__event_scoped_teams.sql)；已有库只执行 V2。测试环境使用 [`schema-h2.sql`](src/main/resources/sql/schema-h2.sql)（由 `application-test.yml` 自动执行）。
+数据库脚本：新库按顺序执行 [`V1__init_schema.sql`](src/main/resources/sql/V1__init_schema.sql)、[`V2__event_scoped_teams.sql`](src/main/resources/sql/V2__event_scoped_teams.sql)、[`V3__challenge_container_runtime.sql`](src/main/resources/sql/V3__challenge_container_runtime.sql) 与 [`V4__container_ttl_and_team_limit.sql`](src/main/resources/sql/V4__container_ttl_and_team_limit.sql)；已有库按顺序补齐尚未执行的迁移。测试环境使用 [`schema-h2.sql`](src/main/resources/sql/schema-h2.sql)（由 `application-test.yml` 自动执行）。
 
 dev profile 首次启动（`tracequest.bootstrap.enabled=true`）会创建默认管理员 `admin / admin12345` 与一条状态为 `open` 的赛事记录；生产环境必须关闭该开关（启动期密钥体检会强制拦截）并通过运维流程创建账号。
 
@@ -61,6 +61,10 @@ dev profile 首次启动（`tracequest.bootstrap.enabled=true`）会创建默认
 | `TQ_SESSION_COOKIE` / `TQ_COOKIE_SECURE` / `TQ_COOKIE_SAME_SITE` | 会话 Cookie 名称与属性（生产要求 `Secure=true`） |
 | `TQ_ENFORCE_SAME_ORIGIN` | 写请求同源校验开关（默认开启） |
 | `TQ_BOOTSTRAP_ENABLED` | 是否创建默认管理员与赛事（生产建议 `false`） |
+| `TQ_RUNTIME_ENABLED` | 是否启用单机 Docker 题目容器 |
+| `TQ_RUNTIME_NETWORK` | 队伍容器内部网络，默认 `tracequest-runtime` |
+| `TQ_PUBLIC_WSS_URL` | frp 443 暴露的公网 WSS 地址 |
+| `TQ_DOCKER_GID` | 宿主机 Docker Socket 所属组 ID |
 
 ## 接口一览（`/api/v1`）
 
@@ -83,11 +87,16 @@ dev profile 首次启动（`tracequest.bootstrap.enabled=true`）会创建默认
 | --- | --- | --- |
 | GET | `/event` | public |
 | GET | `/challenges`、`/challenges/{code}` | public/contestant（不含 `answer`） |
+| POST | `/events/{eventId}/challenges/{code}/runtime/instances` | contestant（启动或复用本队容器） |
+| GET/DELETE | `/events/{eventId}/challenges/{code}/runtime/instances/me` | contestant |
+| POST | `/events/{eventId}/challenges/{code}/runtime/connection-ticket` | contestant（签发一次性 WSS 票据） |
+| POST | `/events/{eventId}/challenges/{code}/runtime/instances/me/extend` | contestant（剩余 ≤30 分钟时延长 1 小时） |
+| GET | `/challenge-connections?ticket=...` | 一次性票据握手，之后为二进制 WebSocket |
 | GET | `/leaderboard?eventId=...` | public/contestant（仅队伍排名，登录返回 `isMe`） |
 | GET | `/files/{fileId}` | contestant（302 跳转 MinIO 预签名地址） |
 | POST | `/challenges/{code}/submissions` | contestant（支持 `Idempotency-Key`） |
 | POST | `/location-verifications` | contestant（支持 `Idempotency-Key`） |
-| GET | `/health` | public（K8s 探针） |
+| GET | `/health` | public（容器健康检查） |
 
 后台管理
 
@@ -96,6 +105,7 @@ dev profile 首次启动（`tracequest.bootstrap.enabled=true`）会创建默认
 | GET | `/admin/dashboard`、`/admin/event`、`/admin/audit-log` | admin |
 | POST/PATCH | `/admin/event` | admin（创建赛事必须设置 `maxTeamSize`） |
 | GET/POST | `/admin/challenges` | admin |
+| POST | `/admin/events/{eventId}/challenges` | admin（题目独占指定赛事） |
 | GET/PATCH/DELETE | `/admin/challenges/{code}` | admin |
 | POST | `/admin/challenges/{code}/publish`、`pause`、`resume` | admin |
 | POST/DELETE | `/admin/challenges/{code}/location-qr` | admin |
@@ -151,6 +161,9 @@ controller、service、repository 三层与 dto/vo 一样按功能模块分目�
 ## 关键实现说明
 
 - **队伍与计分**：队伍和成员关系都带 `event_id`，同一账号可为不同赛事加入不同队伍；提交时必须属于题目所属赛事的队伍，`solves(subject_key, challenge_id)` 按队伍主体唯一计分，榜单只提供队伍维度。
+- **Docker 题目**：每个队伍同时只能运行一个容器，启动时注入 `flag头{BCrypt(队伍名称)}`；容器内部端口从镜像 `EXPOSE` 自动解析，宿主端口由 Docker 随机分配。容器默认存活 1 小时，仅在剩余不超过 30 分钟时允许再延长 1 小时；选手提交非本队 Flag 时记录 WARN 并返回 `403 FLAG_OWNER_MISMATCH`，内容为“串通flag并不是好习惯”。
+- **公网连接**：公网只开放 443，REST 先签发一次性票据，浏览器再通过 `/api/v1/challenge-connections` 建立二进制 WebSocket；后端在内部网络连接容器 TCP，不向客户端暴露容器 IP。
+- **MinIO 端口**：MinIO 继续监听内部 9000/9001，公网由另一个 frp 域名在 443 转发，示例见 [`deploy/frp/frpc.toml.example`](deploy/frp/frpc.toml.example)。
 - **幂等**：`Idempotency-Key` 请求头由 `IdempotentAspect` 统一处理，命中同键同内容时回放首次响应，同键不同内容返回 `409 IDEMPOTENCY_CONFLICT`；请求体中的 `requestId` 亦可用于重放定位。
 - **并发控制**：`solves` 唯一约束 + 基于 Redis 的分布式锁（`DistributedLockAspect`）串行化同一账号的解题写路径。
 - **限流**：登录、提交、位置核验与后台写操作通过 `RateLimitAspect` 与 Redis 计数器限流，超限返回 `429` 与 `Retry-After`。
@@ -172,20 +185,19 @@ controller、service、repository 三层与 dto/vo 一样按功能模块分目�
 
 - 单机 Docker Compose（Ubuntu 20.04 等）：见 [`DEPLOY.md`](DEPLOY.md)；自带全部中间件用 [`docker-compose.yml`](docker-compose.yml)，复用已有的 MySQL/Redis/MinIO 用 [`docker-compose.app-only.yml`](docker-compose.app-only.yml)，变量模板为 [`.env.deploy.example`](.env.deploy.example)。
 - 镜像：多阶段构建，运行阶段基于 slim JRE 25，非 root 用户（见 [`Dockerfile`](Dockerfile)）。
-- Kubernetes：`k8s/` 下提供 ConfigMap、Secret 示例、Deployment（探针指向 `/api/v1/health`）、Service 与 HPA；镜像地址为 `ghcr.io/qaqxianyuqaq/0xtrace-backend`。
+- 支持的部署形态只有单台 Docker Engine + Docker Compose；应用接入 `tracequest-runtime` 内部网络，并通过受限 Docker Socket 管理队伍容器。
 - 流水线：
-  - GitHub Actions：[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 负责密钥扫描 → 编译 → 单元测试 → 集成测试 → 镜像构建校验；[`.github/workflows/release.yml`](.github/workflows/release.yml) 在打 tag（`v*`）时推送镜像到 GHCR，手动触发并经 `production` 环境保护规则审批后滚动更新 Kubernetes。
-  - GitLab CI：[`.gitlab-ci.yml`](.gitlab-ci.yml) 提供等价流水线（lint 阶段同样执行密钥扫描，部署任务需配置受保护的 `KUBE_CONFIG` 变量，未配置则自动跳过）。
-- 部署凭据：Kubernetes 集群凭据只以 CI 变量/Secrets 注入，仓库内仅保留 [`k8s/secret.example.yaml`](k8s/secret.example.yaml) 占位示例。
+  - GitHub Actions：[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 负责密钥扫描 → 编译 → 单元测试 → 集成测试 → 镜像构建校验；[`.github/workflows/release.yml`](.github/workflows/release.yml) 在打 tag（`v*`）时推送镜像到 GHCR。
+  - GitLab CI：[`.gitlab-ci.yml`](.gitlab-ci.yml) 提供等价的构建、测试与镜像推送流水线；生产部署由受控运维流程执行 Docker Compose。
 
 ## 测试
 
 ```bash
-./mvnw test                                        # 单元测试：ScoringServiceImpl、CsvUtil、SameOriginFilter
+./mvnw test                                        # 单元测试：计分、队伍、Flag 归属、CSV 与同源过滤器
 ./mvnw test -Dtest.excluded.groups=none            # 追加集成测试：TraceQuestApiIntegrationTest
 ```
 
-`TraceQuestApiIntegrationTest` 覆盖：管理员建题发布、赛事内队伍创建/标识码加入/人数上限、跨赛事独立队伍、队伍成员计分与后台提交日志、首解加分与重复提交幂等、`Idempotency-Key` 冲突、榜单 `isMe`、个人进度、后台总览与审计、位置二维码签发/核验/撤销、账号导入导出与停用后登录失败、401/403 权限边界。
+`TraceQuestApiIntegrationTest` 覆盖：管理员建题发布、赛事内 Docker 题目字段校验、赛事内队伍创建/标识码加入/人数上限、跨赛事独立队伍、队伍成员计分与后台提交日志、首解加分与重复提交幂等、`Idempotency-Key` 冲突、榜单 `isMe`、个人进度、后台总览与审计、位置二维码签发/核验/撤销、账号导入导出与停用后登录失败、401/403 权限边界。
 
 ## 推送到 GitHub
 
