@@ -57,7 +57,7 @@ public class DistributedLockAspect {
             acquired = cacheService.setIfAbsent(lockKey, lockValue, Duration.ofMillis(lock.leaseMillis()));
         }
         if (!acquired) {
-            throw new ConflictException("该题目正在处理其他提交，请稍后重试");
+            throw new ConflictException("该操作正在处理中，请稍后重试");
         }
 
         // 2. 持有锁执行业务逻辑，异常同样释放锁

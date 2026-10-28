@@ -33,6 +33,9 @@ public interface ChallengeService {
     /** 创建题目。 */
     AdminChallengeVO create(ChallengeCreateDTO request);
 
+    /** 在指定赛事创建独占题目。 */
+    AdminChallengeVO create(String eventId, ChallengeCreateDTO request);
+
     /** 编辑题目。 */
     AdminChallengeVO update(String code, ChallengeUpdateDTO request);
 

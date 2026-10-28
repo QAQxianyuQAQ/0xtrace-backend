@@ -68,6 +68,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/challenges").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/challenges/*").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/leaderboard").permitAll()
+                        // WebSocket 握手由一次性票据拦截器鉴权
+                        .requestMatchers(HttpMethod.GET, "/api/v1/challenge-connections").permitAll()
                         // 后台接口统一要求管理员角色
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                         // 其余接口（提交、个人资料、文件下载）要求已登录

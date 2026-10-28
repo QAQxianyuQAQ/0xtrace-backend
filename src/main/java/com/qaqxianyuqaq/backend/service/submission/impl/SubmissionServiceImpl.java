@@ -16,7 +16,9 @@ import com.qaqxianyuqaq.backend.domain.entity.EventConfig;
 import com.qaqxianyuqaq.backend.domain.entity.Solve;
 import com.qaqxianyuqaq.backend.domain.entity.Submission;
 import com.qaqxianyuqaq.backend.domain.entity.Team;
+import com.qaqxianyuqaq.backend.domain.entity.ChallengeContainerInstance;
 import com.qaqxianyuqaq.backend.domain.enums.ChallengeStatus;
+import com.qaqxianyuqaq.backend.domain.enums.ChallengeRuntimeType;
 import com.qaqxianyuqaq.backend.domain.enums.EventStatus;
 import com.qaqxianyuqaq.backend.domain.enums.SolveSource;
 import com.qaqxianyuqaq.backend.domain.enums.SubmissionResult;
@@ -26,6 +28,7 @@ import com.qaqxianyuqaq.backend.exception.ConflictException;
 import com.qaqxianyuqaq.backend.exception.ErrorCode;
 import com.qaqxianyuqaq.backend.exception.ForbiddenException;
 import com.qaqxianyuqaq.backend.exception.NotFoundException;
+import com.qaqxianyuqaq.backend.exception.FlagOwnerException;
 import com.qaqxianyuqaq.backend.repository.challenge.ChallengeMapper;
 import com.qaqxianyuqaq.backend.repository.submission.SolveMapper;
 import com.qaqxianyuqaq.backend.repository.submission.SubmissionMapper;
@@ -33,6 +36,7 @@ import com.qaqxianyuqaq.backend.security.CredentialCipher;
 import com.qaqxianyuqaq.backend.security.PermissionAssert;
 import com.qaqxianyuqaq.backend.security.UserPrincipal;
 import com.qaqxianyuqaq.backend.service.challenge.ChallengeService;
+import com.qaqxianyuqaq.backend.service.challenge.ChallengeContainerService;
 import com.qaqxianyuqaq.backend.service.event.EventService;
 import com.qaqxianyuqaq.backend.service.submission.ScoringService;
 import com.qaqxianyuqaq.backend.service.submission.SubmissionService;
@@ -71,11 +75,14 @@ public class SubmissionServiceImpl implements SubmissionService {
 
     private final PermissionAssert permissionAssert;
 
+    private final ChallengeContainerService challengeContainerService;
+
     public SubmissionServiceImpl(ChallengeService challengeService, EventService eventService,
                                  ScoringService scoringService, TeamService teamService,
                                  SubmissionMapper submissionMapper, SolveMapper solveMapper,
                                  ChallengeMapper challengeMapper, CredentialCipher credentialCipher,
-                                 PermissionAssert permissionAssert) {
+                                 PermissionAssert permissionAssert,
+                                 ChallengeContainerService challengeContainerService) {
         this.challengeService = challengeService;
         this.eventService = eventService;
         this.scoringService = scoringService;
@@ -85,6 +92,7 @@ public class SubmissionServiceImpl implements SubmissionService {
         this.challengeMapper = challengeMapper;
         this.credentialCipher = credentialCipher;
         this.permissionAssert = permissionAssert;
+        this.challengeContainerService = challengeContainerService;
     }
 
     @Override
@@ -103,16 +111,19 @@ public class SubmissionServiceImpl implements SubmissionService {
         // 3. 校验题目所属赛事处于开放状态
         assertEventOpen(challenge);
 
-        // 4. 同一 requestId 重放时返回既有提交结果，避免重复计分
+        // 4. 容器题目必须提交当前队伍容器实际获得的 Flag
+        validateContainerFlag(challenge, request.answer(), principal);
+
+        // 5. 同一 requestId 重放时返回既有提交结果，避免重复计分
         SubmissionResultVO replayed = replayByRequestId(request, principal, challenge);
         if (replayed != null) {
             return replayed;
         }
 
-        // 5. 服务端权威判题：解密标准答案并做常量时间比较
+        // 6. 服务端权威判题：容器 Flag 已通过归属校验，手工题目比较加密标准答案
         boolean correct = judge(challenge, request.answer());
 
-        // 6. 交由计分引擎完成名次、加分与落库
+        // 7. 交由计分引擎完成名次、加分与落库
         return scoringService.award(principal, challenge, SolveSource.ANSWER, request.answer(),
                 request.requestId(), correct);
     }
@@ -303,11 +314,28 @@ public class SubmissionServiceImpl implements SubmissionService {
 
     /** 服务端判题：比对提交摘要与标准答案。 */
     private boolean judge(Challenge challenge, String answer) {
+        if (challenge.getRuntimeType() == ChallengeRuntimeType.DOCKER) {
+            return true;
+        }
         String standard = credentialCipher.decrypt(challenge.getAnswerSecret());
         if (standard == null || answer == null) {
             return false;
         }
         return DigestUtil.constantTimeEquals(standard.trim(), answer.trim());
+    }
+
+    /** 校验容器 Flag 属于当前用户所在队伍，并记录疑似串通行为。 */
+    private void validateContainerFlag(Challenge challenge, String answer, UserPrincipal principal) {
+        if (challenge.getRuntimeType() != ChallengeRuntimeType.DOCKER) {
+            return;
+        }
+        String eventId = challenge.getEventId();
+        Team team = teamService.requireMembership(eventId, principal.userId());
+        ChallengeContainerInstance instance = challengeContainerService.requireReady(challenge, team);
+        String expected = credentialCipher.decrypt(instance.getFlagSecret());
+        if (expected == null || !DigestUtil.constantTimeEquals(expected.trim(), answer.trim())) {
+            throw new FlagOwnerException(team.getName(), principal.getUsername());
+        }
     }
 
     /** 校验提交记录归属。 */

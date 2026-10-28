@@ -6,7 +6,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
-/** 健康检查接口，供 Kubernetes 存活与就绪探针使用。 */
+/** 健康检查接口，供单机 Docker 与反向代理探活使用。 */
 @RestController
 @RequestMapping("/api/v1/health")
 public class HealthController {

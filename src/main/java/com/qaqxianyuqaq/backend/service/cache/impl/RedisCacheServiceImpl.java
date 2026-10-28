@@ -52,6 +52,22 @@ public class RedisCacheServiceImpl implements CacheService {
     }
 
     @Override
+    public Optional<String> take(String key) {
+        if (!degraded) {
+            try {
+                return Optional.ofNullable(redisTemplate.opsForValue().getAndDelete(key));
+            } catch (RuntimeException exception) {
+                markDegraded(exception);
+            }
+        }
+        LocalCacheEntry entry = localCache.remove(key);
+        if (entry == null || entry.isExpired()) {
+            return Optional.empty();
+        }
+        return Optional.of(entry.value());
+    }
+
+    @Override
     public void set(String key, String value, Duration ttl) {
         if (!degraded) {
             try {

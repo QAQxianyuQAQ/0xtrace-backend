@@ -8,12 +8,9 @@
 #   2. docker compose -f docker-compose.app-only.yml up -d --build
 #
 # 注意：
-#   - 应用不负责建表：请依次导入 V1__init_schema.sql 与 V2__event_scoped_teams.sql。
+#   - 应用不负责建表：请依次导入 V1、V2、V3、V4 四个迁移脚本。
 #   - TQ_MINIO_ENDPOINT 必须与浏览器访问 MinIO 使用的 Host 完全一致，
 #     否则预签名地址会因签名校验失败返回 403 SignatureDoesNotMatch。
-version: "3.7"
-# 说明：Compose v2 会提示 version 字段已废弃，可忽略；保留它是为了兼容旧版 docker-compose（1.x）解析。
-
 services:
 
   app:
@@ -24,6 +21,9 @@ services:
     container_name: tracequest-backend
     restart: unless-stopped
     stop_grace_period: 40s
+    # 仅追加 Docker Socket 所在组，应用进程仍保持非 root
+    group_add:
+      - "${TQ_DOCKER_GID:-999}"
     # 已有中间件只把端口发布到 127.0.0.1 时无法用宿主机 IP 回连，
     # 把 TQ_DB_HOST / TQ_REDIS_HOST 设为 host.docker.internal 并在下方保留该映射即可；
     # 若对方服务发布在 0.0.0.0，也可以直接填宿主机 IP。
@@ -59,11 +59,40 @@ services:
       TQ_ADMIN_USERNAME: ${TQ_ADMIN_USERNAME:-admin}
       TQ_ADMIN_PASSWORD: ${TQ_ADMIN_PASSWORD:?请在 .env 中设置 TQ_ADMIN_PASSWORD}
       TQ_STRICT_SECRET_CHECK: ${TQ_STRICT_SECRET_CHECK:-true}
+      # 单机题目容器运行时配置
+      TQ_RUNTIME_ENABLED: ${TQ_RUNTIME_ENABLED:-true}
+      TQ_RUNTIME_NETWORK: ${TQ_RUNTIME_NETWORK:-tracequest-runtime}
+      TQ_RUNTIME_MEMORY_LIMIT: ${TQ_RUNTIME_MEMORY_LIMIT:-512m}
+      TQ_RUNTIME_CPU_LIMIT: ${TQ_RUNTIME_CPU_LIMIT:-1.0}
+      TQ_RUNTIME_PIDS_LIMIT: ${TQ_RUNTIME_PIDS_LIMIT:-256}
+      TQ_RUNTIME_START_TIMEOUT: ${TQ_RUNTIME_START_TIMEOUT:-60s}
+      TQ_RUNTIME_COMMAND_TIMEOUT: ${TQ_RUNTIME_COMMAND_TIMEOUT:-5m}
+      TQ_RUNTIME_INSTANCE_TTL: ${TQ_RUNTIME_INSTANCE_TTL:-1h}
+      TQ_RUNTIME_EXTENSION_DURATION: ${TQ_RUNTIME_EXTENSION_DURATION:-1h}
+      TQ_RUNTIME_EXTENSION_WINDOW: ${TQ_RUNTIME_EXTENSION_WINDOW:-30m}
+      TQ_RUNTIME_CLEANUP_INTERVAL: ${TQ_RUNTIME_CLEANUP_INTERVAL:-30s}
+      TQ_CONNECTION_TICKET_TTL: ${TQ_CONNECTION_TICKET_TTL:-60s}
+      TQ_WEBSOCKET_IDLE_TIMEOUT: ${TQ_WEBSOCKET_IDLE_TIMEOUT:-5m}
+      TQ_PUBLIC_WSS_URL: ${TQ_PUBLIC_WSS_URL:-wss://tq.example.com/api/v1/challenge-connections}
       # 赛事默认值
       TQ_EVENT_NAME: ${TQ_EVENT_NAME:-TraceQuest Season 01}
       TQ_EVENT_TIMEZONE: ${TQ_EVENT_TIMEZONE:-Asia/Shanghai}
     ports:
-      - "${TQ_SERVER_PORT:-8080}:8080"
+      # 后端仅供本机 frp/反向代理访问，公网不直接开放 8080
+      - "127.0.0.1:${TQ_SERVER_PORT:-8080}:8080"
+    volumes:
+      # 生产环境建议使用受限 Docker Socket Proxy
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - tracequest-runtime
+
+networks:
+  default:
+  tracequest-runtime:
+    name: tracequest-runtime
+    driver: bridge
+    internal: true
 
 # 方式二（可选）：不复用宿主机端口，而是直接加入对方 Compose 的容器网络。
 # 打开下面注释，把 TQ_DB_HOST / TQ_REDIS_HOST 改成对方 compose 里的服务名，

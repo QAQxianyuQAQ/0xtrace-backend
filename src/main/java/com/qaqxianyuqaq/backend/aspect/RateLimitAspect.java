@@ -59,6 +59,9 @@ public class RateLimitAspect {
             case "submission" -> properties.getRateLimit().getSubmissionPerMinute();
             case "location-verify" -> properties.getRateLimit().getLocationVerifyPerMinute();
             case "admin-write" -> properties.getRateLimit().getAdminWritePerMinute();
+            case "container-start" -> properties.getRateLimit().getContainerStartPerMinute();
+            case "container-ticket" -> properties.getRateLimit().getContainerTicketPerMinute();
+            case "container-extend" -> properties.getRateLimit().getContainerTicketPerMinute();
             default -> DEFAULT_LIMIT;
         };
     }

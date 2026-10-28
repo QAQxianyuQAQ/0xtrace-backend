@@ -1,4 +1,4 @@
-# 发布流水线：打 tag 时构建并推送镜像到 GHCR，手动触发可继续部署到 Kubernetes
+# 发布流水线：打 tag 时构建并推送单机 Docker 部署镜像到 GHCR
 name: release
 
 on:
@@ -46,35 +46,3 @@ jobs:
           tags: |
             ${{ steps.meta.outputs.image }}:${{ github.ref_name }}
             ${{ steps.meta.outputs.image }}:latest
-
-  deploy:
-    name: 部署到 Kubernetes
-    needs: image
-    # 仅手动触发时执行，配合 environment protection 做发布审批
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - name: 校验部署凭据
-        env:
-          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
-        run: |
-          if [ -z "${KUBE_CONFIG}" ]; then
-            echo "未配置 secrets.KUBE_CONFIG，无法执行部署" >&2
-            exit 1
-          fi
-      - name: 配置 kubeconfig
-        env:
-          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
-        run: |
-          mkdir -p "$HOME/.kube"
-          printf '%s' "${KUBE_CONFIG}" | base64 -d > "$HOME/.kube/config"
-          chmod 600 "$HOME/.kube/config"
-      - name: 滚动更新镜像
-        env:
-          IMAGE: ${{ needs.image.outputs.image }}
-          TAG: ${{ github.ref_name }}
-          NAMESPACE: ${{ vars.K8S_NAMESPACE || 'tracequest' }}
-        run: |
-          kubectl -n "${NAMESPACE}" set image deployment/tracequest-backend backend="${IMAGE}:${TAG}"
-          kubectl -n "${NAMESPACE}" rollout status deployment/tracequest-backend --timeout=180s

@@ -8,9 +8,6 @@
 #   - 所有敏感值只从同目录 .env 读取，仓库内不保存任何真实凭据（.env 已被 .gitignore 忽略）。
 #   - MySQL 与 Redis 只在内部网络暴露，不对宿主机发布端口，避免数据库直接暴露到公网。
 #   - MinIO 需要发布端口：预签名下载地址由 TQ_MINIO_ENDPOINT 生成，浏览器必须能直接访问该地址。
-version: "3.7"
-# 说明：Compose v2 会提示 version 字段已废弃，可忽略；保留它是为了兼容旧版 docker-compose（1.x）解析。
-
 services:
 
   # MySQL：唯一数据源。首次初始化会自动执行 resources/sql 下的建表脚本。
@@ -34,6 +31,8 @@ services:
       # 建表脚本不含 USE 语句，entrypoint 会在 MYSQL_DATABASE 指定的库内执行
       - ./src/main/resources/sql/V1__init_schema.sql:/docker-entrypoint-initdb.d/01-init-schema.sql:ro
       - ./src/main/resources/sql/V2__event_scoped_teams.sql:/docker-entrypoint-initdb.d/02-event-scoped-teams.sql:ro
+      - ./src/main/resources/sql/V3__challenge_container_runtime.sql:/docker-entrypoint-initdb.d/03-challenge-container-runtime.sql:ro
+      - ./src/main/resources/sql/V4__container_ttl_and_team_limit.sql:/docker-entrypoint-initdb.d/04-container-ttl-and-team-limit.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
       interval: 10s
@@ -80,10 +79,9 @@ services:
       MINIO_ROOT_PASSWORD: ${TQ_MINIO_SECRET_KEY:?请在 .env 中设置 TQ_MINIO_SECRET_KEY}
       TZ: Asia/Shanghai
     ports:
-      # 9000 为 S3 API（浏览器下载直接走这里）；9001 为控制台端口，
-      # 新版 MinIO 社区版已移除内置网页控制台，此时该端口不会被监听，可用 mc 客户端管理
-      - "${TQ_MINIO_API_PORT:-9000}:9000"
-      - "${TQ_MINIO_CONSOLE_PORT:-9001}:9001"
+      # MinIO 仅在宿主机回环地址监听 9000/9001，公网只通过 frp 的 443 域名访问
+      - "127.0.0.1:${TQ_MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${TQ_MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
     networks:
@@ -99,6 +97,9 @@ services:
     restart: unless-stopped
     # 优雅停机：等待 Spring Boot 处理完在途请求（应用侧超时 20s）
     stop_grace_period: 40s
+    # 仅追加 Docker Socket 所在组，应用进程仍保持非 root
+    group_add:
+      - "${TQ_DOCKER_GID:-999}"
     depends_on:
       mysql:
         condition: service_healthy
@@ -136,13 +137,33 @@ services:
       TQ_ADMIN_USERNAME: ${TQ_ADMIN_USERNAME:-admin}
       TQ_ADMIN_PASSWORD: ${TQ_ADMIN_PASSWORD:?请在 .env 中设置 TQ_ADMIN_PASSWORD}
       TQ_STRICT_SECRET_CHECK: ${TQ_STRICT_SECRET_CHECK:-true}
+      # 单机题目容器运行时：通过限制型 Docker Engine 管理队伍容器
+      TQ_RUNTIME_ENABLED: ${TQ_RUNTIME_ENABLED:-true}
+      TQ_RUNTIME_NETWORK: ${TQ_RUNTIME_NETWORK:-tracequest-runtime}
+      TQ_RUNTIME_MEMORY_LIMIT: ${TQ_RUNTIME_MEMORY_LIMIT:-512m}
+      TQ_RUNTIME_CPU_LIMIT: ${TQ_RUNTIME_CPU_LIMIT:-1.0}
+      TQ_RUNTIME_PIDS_LIMIT: ${TQ_RUNTIME_PIDS_LIMIT:-256}
+      TQ_RUNTIME_START_TIMEOUT: ${TQ_RUNTIME_START_TIMEOUT:-60s}
+      TQ_RUNTIME_COMMAND_TIMEOUT: ${TQ_RUNTIME_COMMAND_TIMEOUT:-5m}
+      TQ_RUNTIME_INSTANCE_TTL: ${TQ_RUNTIME_INSTANCE_TTL:-1h}
+      TQ_RUNTIME_EXTENSION_DURATION: ${TQ_RUNTIME_EXTENSION_DURATION:-1h}
+      TQ_RUNTIME_EXTENSION_WINDOW: ${TQ_RUNTIME_EXTENSION_WINDOW:-30m}
+      TQ_RUNTIME_CLEANUP_INTERVAL: ${TQ_RUNTIME_CLEANUP_INTERVAL:-30s}
+      TQ_CONNECTION_TICKET_TTL: ${TQ_CONNECTION_TICKET_TTL:-60s}
+      TQ_WEBSOCKET_IDLE_TIMEOUT: ${TQ_WEBSOCKET_IDLE_TIMEOUT:-5m}
+      TQ_PUBLIC_WSS_URL: ${TQ_PUBLIC_WSS_URL:-wss://tq.example.com/api/v1/challenge-connections}
       # 赛事默认值
       TQ_EVENT_NAME: ${TQ_EVENT_NAME:-TraceQuest Season 01}
       TQ_EVENT_TIMEZONE: ${TQ_EVENT_TIMEZONE:-Asia/Shanghai}
     ports:
-      - "${TQ_SERVER_PORT:-8080}:8080"
+      # 后端仅供本机 frp/反向代理访问，公网不直接开放 8080
+      - "127.0.0.1:${TQ_SERVER_PORT:-8080}:8080"
+    volumes:
+      # 生产环境建议使用受限 Docker Socket Proxy，而不是直接暴露完整 Docker API
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - tracequest
+      - tracequest-runtime
 
 volumes:
   mysql-data:
@@ -152,3 +173,8 @@ volumes:
 networks:
   tracequest:
     driver: bridge
+  # 题目容器仅加入内部网络，不发布公网端口
+  tracequest-runtime:
+    name: tracequest-runtime
+    driver: bridge
+    internal: true

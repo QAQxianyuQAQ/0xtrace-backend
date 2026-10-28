@@ -3,6 +3,7 @@ package com.qaqxianyuqaq.backend.domain.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.qaqxianyuqaq.backend.domain.enums.ChallengeRuntimeType;
 import com.qaqxianyuqaq.backend.domain.enums.ChallengeStatus;
 import lombok.Getter;
 import lombok.Setter;
@@ -47,6 +48,21 @@ public class Challenge {
 
     /** 标准答案的 SHA-256 摘要，禁止明文落库与下发。 */
     private String answerSecret;
+
+    /** 运行时类型：手工 Flag 或按队伍启动 Docker 容器。 */
+    private ChallengeRuntimeType runtimeType;
+
+    /** Docker Hub 镜像仓库，例如 qaqxianyuqaq/heap-garden。 */
+    private String dockerImage;
+
+    /** Docker 镜像标签。 */
+    private String dockerTag;
+
+    /** 启动容器时注入 Flag 的环境变量名。 */
+    private String flagEnvName;
+
+    /** Flag 头，最终注入值为“头{BCrypt 密文}”。 */
+    private String flagPrefix;
 
     /** 封面文件主键，指向 challenge_files。 */
     private String coverFileId;

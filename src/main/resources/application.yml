@@ -4,6 +4,8 @@
 server:
   port: ${TQ_SERVER_PORT:8080}
   shutdown: graceful
+  # frp/反向代理会传递外部 Host 与协议，WebSocket Origin 校验依赖规范化后的请求信息
+  forward-headers-strategy: framework
 
 spring:
   application:
@@ -103,6 +105,25 @@ tracequest:
     admin-password: ${TQ_ADMIN_PASSWORD:}
     event-name: ${TQ_EVENT_NAME:TraceQuest Season 01}
     event-timezone: ${TQ_EVENT_TIMEZONE:Asia/Shanghai}
+  runtime:
+    # 仅支持单台 Docker Engine；测试 profile 会显式关闭真实容器启动
+    enabled: ${TQ_RUNTIME_ENABLED:true}
+    docker-binary: ${TQ_DOCKER_BINARY:docker}
+    network: ${TQ_RUNTIME_NETWORK:tracequest-runtime}
+    command-timeout: ${TQ_RUNTIME_COMMAND_TIMEOUT:5m}
+    start-timeout: ${TQ_RUNTIME_START_TIMEOUT:60s}
+    health-interval: ${TQ_RUNTIME_HEALTH_INTERVAL:1s}
+    instance-ttl: ${TQ_RUNTIME_INSTANCE_TTL:1h}
+    extension-duration: ${TQ_RUNTIME_EXTENSION_DURATION:1h}
+    extension-window: ${TQ_RUNTIME_EXTENSION_WINDOW:30m}
+    cleanup-interval: ${TQ_RUNTIME_CLEANUP_INTERVAL:30s}
+    memory-limit: ${TQ_RUNTIME_MEMORY_LIMIT:512m}
+    cpu-limit: ${TQ_RUNTIME_CPU_LIMIT:1.0}
+    pids-limit: ${TQ_RUNTIME_PIDS_LIMIT:256}
+    connection-ticket-ttl: ${TQ_CONNECTION_TICKET_TTL:60s}
+    websocket-idle-timeout: ${TQ_WEBSOCKET_IDLE_TIMEOUT:5m}
+    max-websocket-frame-bytes: ${TQ_WEBSOCKET_MAX_FRAME_BYTES:1048576}
+    public-wss-url: ${TQ_PUBLIC_WSS_URL:wss://localhost/api/v1/challenge-connections}
 
 logging:
   level:

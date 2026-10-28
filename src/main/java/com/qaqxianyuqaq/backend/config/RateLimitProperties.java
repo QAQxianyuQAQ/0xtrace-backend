@@ -21,4 +21,10 @@ public class RateLimitProperties {
     private int locationVerifyPerMinute = 20;
 
     private int adminWritePerMinute = 60;
+
+    /** 单个账号每分钟允许启动题目容器的次数。 */
+    private int containerStartPerMinute = 6;
+
+    /** 单个账号每分钟允许申请连接票据的次数。 */
+    private int containerTicketPerMinute = 30;
 }

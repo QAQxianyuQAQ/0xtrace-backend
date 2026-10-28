@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE TABLE IF NOT EXISTS challenges (
     id            VARCHAR(40)  NOT NULL,
-    event_id      VARCHAR(40)  NULL,
+    event_id      VARCHAR(40)  NOT NULL,
     code          VARCHAR(24)  NOT NULL,
     title         VARCHAR(128) NOT NULL,
     category      VARCHAR(32)  NOT NULL,
@@ -71,6 +71,11 @@ CREATE TABLE IF NOT EXISTS challenges (
     bonus_other   INT          NOT NULL DEFAULT 0,
     description   VARCHAR(8000) NULL,
     answer_secret VARCHAR(512) NULL,
+    runtime_type  VARCHAR(16)  NOT NULL DEFAULT 'MANUAL',
+    docker_image  VARCHAR(255) NULL,
+    docker_tag    VARCHAR(128) NULL,
+    flag_env_name VARCHAR(128) NULL,
+    flag_prefix   VARCHAR(32)  NULL,
     cover_file_id VARCHAR(40)  NULL,
     cover_url     VARCHAR(512) NULL,
     status        VARCHAR(16)  NOT NULL,
@@ -81,6 +86,37 @@ CREATE TABLE IF NOT EXISTS challenges (
     PRIMARY KEY (id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uk_challenges_code ON challenges (code);
+CREATE INDEX IF NOT EXISTS idx_challenges_event_status ON challenges (event_id, status);
+
+CREATE TABLE IF NOT EXISTS challenge_container_instances (
+    id              VARCHAR(40)  NOT NULL,
+    event_id        VARCHAR(40)  NOT NULL,
+    challenge_id    VARCHAR(40)  NOT NULL,
+    team_id         VARCHAR(40)  NOT NULL,
+    container_id    VARCHAR(80)  NULL,
+    container_name  VARCHAR(128) NOT NULL,
+    status          VARCHAR(16)  NOT NULL,
+    docker_image    VARCHAR(255) NOT NULL,
+    docker_tag      VARCHAR(128) NOT NULL,
+    flag_env_name   VARCHAR(128) NOT NULL,
+    flag_secret     VARCHAR(512) NOT NULL,
+    container_ip    VARCHAR(64)  NULL,
+    host_ip         VARCHAR(64)  NULL,
+    host_port       INT          NULL,
+    container_port  INT          NOT NULL,
+    last_error      VARCHAR(512) NULL,
+    ready_at        TIMESTAMP(3) NULL,
+    expires_at      TIMESTAMP(3) NULL,
+    created_at      TIMESTAMP(3) NULL,
+    updated_at      TIMESTAMP(3) NULL,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_container_instance_team
+    ON challenge_container_instances (team_id);
+CREATE INDEX IF NOT EXISTS idx_container_instance_expires
+    ON challenge_container_instances (status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_container_instance_event_team
+    ON challenge_container_instances (event_id, team_id);
 
 CREATE TABLE IF NOT EXISTS challenge_files (
     id            VARCHAR(40)  NOT NULL,

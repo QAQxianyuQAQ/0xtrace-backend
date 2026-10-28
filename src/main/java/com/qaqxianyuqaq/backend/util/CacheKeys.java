@@ -37,6 +37,9 @@ public final class CacheKeys {
     /** 排行榜缓存前缀，用于解题或调整积分后整体失效。 */
     public static final String LEADERBOARD_PREFIX = PREFIX + "leaderboard:";
 
+    /** WebSocket 连接票据：短时有效且消费后立即删除。 */
+    public static final String CONNECTION_TICKET = PREFIX + "connection-ticket:%s";
+
     private CacheKeys() {
     }
 
@@ -68,5 +71,10 @@ public final class CacheKeys {
     /** 拼接排行榜缓存键。 */
     public static String leaderboard(String eventId, String scope, int page, int pageSize) {
         return LEADERBOARD.formatted(eventId, scope, page, pageSize);
+    }
+
+    /** 拼接 WebSocket 连接票据键。 */
+    public static String connectionTicket(String ticket) {
+        return CONNECTION_TICKET.formatted(ticket);
     }
 }

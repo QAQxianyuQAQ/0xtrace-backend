@@ -256,8 +256,8 @@ class TraceQuestApiIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(Map.of("name", "Team Cup",
                                 "timezone", "Asia/Shanghai",
-                                "startsAt", "2026-10-22T09:00:00+08:00",
-                                "endsAt", "2026-10-22T18:00:00+08:00",
+                                "startsAt", "2020-10-22T09:00:00+08:00",
+                                "endsAt", "2035-10-22T18:00:00+08:00",
                                 "maxTeamSize", 2))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.name").value("Team Cup"))
@@ -400,6 +400,59 @@ class TraceQuestApiIntegrationTest {
         String csv = export.getResponse().getContentAsString();
         assertThat(csv).contains("username,team,status,created,note");
         assertThat(csv).doesNotContain("password");
+    }
+
+    @Test
+    @DisplayName("赛事内可创建 Docker 题目并严格校验运行字段")
+    void shouldCreateEventScopedDockerChallenge() throws Exception {
+        String adminSession = login("admin", "admin12345");
+        MvcResult currentEvent = mockMvc.perform(get("/api/v1/event"))
+                .andExpect(status().isOk())
+                .andReturn();
+        String eventId = read(currentEvent, "$.id");
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("code", "PWN-DOCKER");
+        payload.put("title", "队伍隔离容器题");
+        payload.put("category", "PWN");
+        payload.put("difficulty", "困难");
+        payload.put("points", 600);
+        payload.put("description", "每个队伍获得独立容器与 Flag");
+        payload.put("dockerImage", "qaqxianyuqaq/example-challenge");
+        payload.put("dockerTag", "1.0.0");
+        payload.put("flagEnvName", "CHALLENGE_FLAG");
+        payload.put("flagPrefix", "sacc");
+        payload.put("status", "draft");
+
+        mockMvc.perform(post("/api/v1/admin/events/" + eventId + "/challenges")
+                        .cookie(sessionCookie(adminSession))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(payload)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.eventId").value(eventId))
+                .andExpect(jsonPath("$.containerEnabled").value(true))
+                .andExpect(jsonPath("$.runtimeType").value("DOCKER"))
+                .andExpect(jsonPath("$.answer").doesNotExist());
+
+        mockMvc.perform(post("/api/v1/admin/challenges/PWN-DOCKER/publish")
+                        .cookie(sessionCookie(adminSession)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("published"));
+
+        mockMvc.perform(get("/api/v1/challenges/PWN-DOCKER"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.containerEnabled").value(true))
+                .andExpect(jsonPath("$.dockerImage").doesNotExist())
+                .andExpect(jsonPath("$.flagEnvName").doesNotExist());
+
+        payload.put("code", "PWN-BAD");
+        payload.remove("flagPrefix");
+        mockMvc.perform(post("/api/v1/admin/events/" + eventId + "/challenges")
+                        .cookie(sessionCookie(adminSession))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(payload)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }
 
     /** 登录并返回会话令牌，测试通过 Cookie 传递身份。 */

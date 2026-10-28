@@ -23,6 +23,8 @@ public enum ErrorCode {
     EVENT_STATE_CONFLICT(HttpStatus.CONFLICT, "赛事状态流转不合法"),
     SUBMISSION_CLOSED(HttpStatus.CONFLICT, "当前不在可作答时间窗内"),
     CHALLENGE_NOT_ANSWERABLE(HttpStatus.CONFLICT, "题目当前不可作答"),
+    CONTAINER_NOT_READY(HttpStatus.CONFLICT, "题目容器尚未就绪"),
+    FLAG_OWNER_MISMATCH(HttpStatus.FORBIDDEN, "串通flag并不是好习惯"),
     IDEMPOTENCY_CONFLICT(HttpStatus.CONFLICT, "幂等键复用但请求内容冲突"),
     PAYLOAD_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "文件或请求体过大"),
     UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "不支持的媒体类型"),
@@ -30,6 +32,7 @@ public enum ErrorCode {
     BUSINESS_RULE_VIOLATION(HttpStatus.UNPROCESSABLE_ENTITY, "业务校验失败"),
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "请求过于频繁"),
     STORAGE_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "对象存储不可用"),
+    CONTAINER_RUNTIME_ERROR(HttpStatus.SERVICE_UNAVAILABLE, "题目容器暂不可用"),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "服务端错误"),
     NOT_IMPLEMENTED(HttpStatus.NOT_IMPLEMENTED, "该能力尚未实现");
 

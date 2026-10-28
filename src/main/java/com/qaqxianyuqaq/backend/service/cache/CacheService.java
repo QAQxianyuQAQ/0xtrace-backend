@@ -13,6 +13,9 @@ public interface CacheService {
     /** 读取字符串值。 */
     Optional<String> get(String key);
 
+    /** 原子读取并删除一次性值，供连接票据等不可重放场景使用。 */
+    Optional<String> take(String key);
+
     /** 写入字符串值并设置过期时间。 */
     void set(String key, String value, Duration ttl);
 

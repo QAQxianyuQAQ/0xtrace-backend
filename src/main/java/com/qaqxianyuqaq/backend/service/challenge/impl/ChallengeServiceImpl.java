@@ -18,6 +18,7 @@ import com.qaqxianyuqaq.backend.domain.entity.ChallengeFile;
 import com.qaqxianyuqaq.backend.domain.entity.Solve;
 import com.qaqxianyuqaq.backend.domain.entity.Team;
 import com.qaqxianyuqaq.backend.domain.enums.ChallengeStatus;
+import com.qaqxianyuqaq.backend.domain.enums.ChallengeRuntimeType;
 import com.qaqxianyuqaq.backend.domain.enums.FileKind;
 import com.qaqxianyuqaq.backend.exception.ConflictException;
 import com.qaqxianyuqaq.backend.exception.ErrorCode;
@@ -29,6 +30,7 @@ import com.qaqxianyuqaq.backend.repository.submission.SolveMapper;
 import com.qaqxianyuqaq.backend.security.CredentialCipher;
 import com.qaqxianyuqaq.backend.security.UserPrincipal;
 import com.qaqxianyuqaq.backend.service.cache.CacheService;
+import com.qaqxianyuqaq.backend.service.challenge.ChallengeContainerService;
 import com.qaqxianyuqaq.backend.service.challenge.ChallengeService;
 import com.qaqxianyuqaq.backend.service.event.EventService;
 import com.qaqxianyuqaq.backend.service.contestant.TeamService;
@@ -75,10 +77,12 @@ public class ChallengeServiceImpl implements ChallengeService {
 
     private final TeamService teamService;
 
+    private final ChallengeContainerService challengeContainerService;
+
     public ChallengeServiceImpl(ChallengeMapper challengeMapper, ChallengeFileMapper challengeFileMapper,
                                 SolveMapper solveMapper, CacheService cacheService, EventService eventService,
                                 FileStorageService fileStorageService, CredentialCipher credentialCipher,
-                                TeamService teamService) {
+                                TeamService teamService, ChallengeContainerService challengeContainerService) {
         this.challengeMapper = challengeMapper;
         this.challengeFileMapper = challengeFileMapper;
         this.solveMapper = solveMapper;
@@ -87,6 +91,7 @@ public class ChallengeServiceImpl implements ChallengeService {
         this.fileStorageService = fileStorageService;
         this.credentialCipher = credentialCipher;
         this.teamService = teamService;
+        this.challengeContainerService = challengeContainerService;
     }
 
     @Override
@@ -127,7 +132,8 @@ public class ChallengeServiceImpl implements ChallengeService {
                         challenge.getCategory(), challenge.getDifficulty(), challenge.getPoints(),
                         challenge.getDescription(), resolveCoverUrl(challenge),
                         attachments.getOrDefault(challenge.getId(), List.of()),
-                        solvedChallengeIds.contains(challenge.getId()) ? "solved" : "unsolved"))
+                        solvedChallengeIds.contains(challenge.getId()) ? "solved" : "unsolved",
+                        containerEnabled(challenge)))
                 .toList();
         return PageUtil.toPage(page, items);
     }
@@ -155,7 +161,7 @@ public class ChallengeServiceImpl implements ChallengeService {
         // 4. 组装响应
         return new ChallengeVO(payload.code(), payload.title(), payload.category(),
                 payload.difficulty(), payload.points(), payload.description(), payload.coverUrl(),
-                payload.attachments(), myStatus);
+                payload.attachments(), myStatus, payload.containerEnabled());
     }
 
     @Override
@@ -195,11 +201,18 @@ public class ChallengeServiceImpl implements ChallengeService {
     @Override
     @Transactional
     public AdminChallengeVO create(ChallengeCreateDTO request) {
+        return create(null, request);
+    }
+
+    @Override
+    @Transactional
+    public AdminChallengeVO create(String eventId, ChallengeCreateDTO request) {
         // 1. 校验必填字段与题目编号唯一性
+        String effectiveEventId = eventId == null || eventId.isBlank()
+                ? eventService.requireCurrent().getId() : eventService.requireById(eventId).getId();
         validateRequired(request.code(), request.title(), request.category(), request.difficulty(), request.points());
-        if (request.answer() == null || request.answer().isBlank()) {
-            throw new ValidationFailedException("answer", "题目答案不能为空");
-        }
+        ChallengeRuntimeType runtimeType = resolveRuntimeType(request.dockerImage(), request.dockerTag(),
+                request.flagEnvName(), request.flagPrefix(), request.answer());
         boolean duplicated = challengeMapper.exists(Wrappers.<Challenge>lambdaQuery()
                 .eq(Challenge::getCode, request.code()));
         if (duplicated) {
@@ -209,19 +222,28 @@ public class ChallengeServiceImpl implements ChallengeService {
         // 2. 组装题实体，答案以密文保存，封面可用外部地址
         Challenge challenge = new Challenge();
         challenge.setId(IdGenerator.next("chal"));
-        challenge.setEventId(eventService.requireCurrent().getId());
+        challenge.setEventId(effectiveEventId);
         challenge.setCode(request.code());
         challenge.setTitle(request.title().trim());
         challenge.setCategory(request.category().trim());
         challenge.setDifficulty(request.difficulty().trim());
         challenge.setPoints(request.points());
         challenge.setDescription(request.description());
-        challenge.setAnswerSecret(credentialCipher.encrypt(request.answer()));
+        challenge.setRuntimeType(runtimeType);
+        challenge.setDockerImage(trimToNull(request.dockerImage()));
+        challenge.setDockerTag(trimToNull(request.dockerTag()));
+        challenge.setFlagEnvName(trimToNull(request.flagEnvName()));
+        challenge.setFlagPrefix(trimToNull(request.flagPrefix()));
+        challenge.setAnswerSecret(runtimeType == ChallengeRuntimeType.MANUAL
+                ? credentialCipher.encrypt(request.answer()) : null);
         challenge.setCoverUrl(request.coverUrl());
         applyBonuses(challenge, request.bonuses());
         ChallengeStatus status = request.status() == null || request.status().isBlank()
                 ? ChallengeStatus.DRAFT
                 : EnumUtil.parse(ChallengeStatus.class, request.status(), "status");
+        if (runtimeType == ChallengeRuntimeType.DOCKER && status == ChallengeStatus.PUBLISHED) {
+            throw new ValidationFailedException("status", "容器题目应先保存为草稿，再单独发布");
+        }
         challenge.setStatus(status);
         challenge.setPublishedAt(status == ChallengeStatus.PUBLISHED ? TimeUtil.now() : null);
         challenge.setVersion(1);
@@ -249,6 +271,7 @@ public class ChallengeServiceImpl implements ChallengeService {
 
         // 3. 逐字段应用补丁，未传字段保持不变
         applyUpdate(challenge, request);
+        validateRuntimeState(challenge);
 
         // 4. 版本号自增后落库
         challenge.setVersion(challenge.getVersion() + 1);
@@ -276,6 +299,7 @@ public class ChallengeServiceImpl implements ChallengeService {
         }
 
         // 3. 删除题目文件与题目本体
+        challengeContainerService.stopByChallenge(challenge.getId());
         fileStorageService.deleteAllFiles(challenge.getId());
         challengeMapper.deleteById(challenge.getId());
 
@@ -293,12 +317,17 @@ public class ChallengeServiceImpl implements ChallengeService {
         if (target == ChallengeStatus.PUBLISHED) {
             validateRequired(challenge.getCode(), challenge.getTitle(), challenge.getCategory(),
                     challenge.getDifficulty(), challenge.getPoints());
-            if (challenge.getAnswerSecret() == null || challenge.getAnswerSecret().isBlank()) {
+            if (challenge.getRuntimeType() == ChallengeRuntimeType.MANUAL
+                    && (challenge.getAnswerSecret() == null || challenge.getAnswerSecret().isBlank())) {
                 throw new ValidationFailedException("answer", "发布前必须配置题目答案");
             }
             if (challenge.getPublishedAt() == null) {
                 challenge.setPublishedAt(TimeUtil.now());
             }
+        }
+        if (target == ChallengeStatus.ARCHIVED) {
+            // 归档时立即释放题目容器资源
+            challengeContainerService.stopByChallenge(challenge.getId());
         }
 
         // 3. 更新状态与版本号
@@ -365,6 +394,23 @@ public class ChallengeServiceImpl implements ChallengeService {
         if (request.answer() != null && !request.answer().isBlank()) {
             challenge.setAnswerSecret(credentialCipher.encrypt(request.answer()));
         }
+        if (request.dockerImage() != null) {
+            challenge.setDockerImage(trimToNull(request.dockerImage()));
+        }
+        if (request.dockerTag() != null) {
+            challenge.setDockerTag(trimToNull(request.dockerTag()));
+        }
+        if (request.flagEnvName() != null) {
+            challenge.setFlagEnvName(trimToNull(request.flagEnvName()));
+        }
+        if (request.flagPrefix() != null) {
+            challenge.setFlagPrefix(trimToNull(request.flagPrefix()));
+        }
+        if (!blank(request.dockerImage()) || !blank(request.dockerTag())
+                || !blank(request.flagEnvName()) || !blank(request.flagPrefix())) {
+            challenge.setRuntimeType(ChallengeRuntimeType.DOCKER);
+            challenge.setAnswerSecret(null);
+        }
         if (request.coverUrl() != null) {
             challenge.setCoverUrl(request.coverUrl().isBlank() ? null : request.coverUrl().trim());
             challenge.setCoverFileId(null);
@@ -391,7 +437,8 @@ public class ChallengeServiceImpl implements ChallengeService {
         ChallengePayloadVO payload = new ChallengePayloadVO(challenge.getCode(), challenge.getTitle(),
                 challenge.getCategory(), challenge.getDifficulty(), challenge.getPoints(), challenge.getDescription(),
                 resolveCoverUrl(challenge),
-                loadAttachmentMap(List.of(challenge.getId())).getOrDefault(challenge.getId(), List.of()));
+                loadAttachmentMap(List.of(challenge.getId())).getOrDefault(challenge.getId(), List.of()),
+                containerEnabled(challenge));
         cacheService.set(cacheKey, JsonUtil.toJson(payload), CHALLENGE_CACHE_TTL);
         return payload;
     }
@@ -444,13 +491,75 @@ public class ChallengeServiceImpl implements ChallengeService {
 
     /** 实体转管理端响应模型。 */
     private AdminChallengeVO toAdminVO(Challenge challenge, List<FileVO> attachments) {
-        return new AdminChallengeVO(challenge.getId(), challenge.getCode(), challenge.getTitle(),
+        return new AdminChallengeVO(challenge.getId(), challenge.getEventId(), challenge.getCode(), challenge.getTitle(),
                 challenge.getCategory(), challenge.getDifficulty(), challenge.getPoints(),
                 new BonusesDTO(challenge.getBonusFirst(), challenge.getBonusSecond(),
                         challenge.getBonusThird(), challenge.getBonusOther()),
                 challenge.getDescription(), credentialCipher.decrypt(challenge.getAnswerSecret()),
                 resolveCoverUrl(challenge), challenge.getStatus().apiValue(), challenge.getVersion(),
-                challenge.getPublishedAt(), challenge.getCreatedAt(), challenge.getUpdatedAt(), attachments);
+                challenge.getPublishedAt(), challenge.getCreatedAt(), challenge.getUpdatedAt(), attachments,
+                containerEnabled(challenge), challenge.getRuntimeType() == null ? null
+                : challenge.getRuntimeType().name(), challenge.getDockerImage(), challenge.getDockerTag(),
+                challenge.getFlagEnvName(), challenge.getFlagPrefix());
+    }
+
+    /** 判断题目是否完整配置 Docker 运行时。 */
+    private boolean containerEnabled(Challenge challenge) {
+        return challenge.getRuntimeType() == ChallengeRuntimeType.DOCKER
+                && challenge.getDockerImage() != null && challenge.getDockerTag() != null
+                && challenge.getFlagEnvName() != null && challenge.getFlagPrefix() != null;
+    }
+
+    /** 严格区分手工 Flag 和容器 Flag 模式，禁止字段混填或成组字段缺失。 */
+    private ChallengeRuntimeType resolveRuntimeType(String dockerImage, String dockerTag, String flagEnvName,
+                                                    String flagPrefix, String answer) {
+        int containerFields = (blank(dockerImage) ? 0 : 1) + (blank(dockerTag) ? 0 : 1)
+                + (blank(flagEnvName) ? 0 : 1) + (blank(flagPrefix) ? 0 : 1);
+        if (containerFields != 0 && containerFields != 4) {
+            throw new ValidationFailedException("dockerImage",
+                    "Docker 镜像、标签、Flag 环境变量和 Flag 头必须同时填写");
+        }
+        if (containerFields == 4) {
+            if (!blank(answer)) {
+                throw new ValidationFailedException("answer", "容器题目不能同时填写手工 Flag");
+            }
+            return ChallengeRuntimeType.DOCKER;
+        }
+        if (blank(answer)) {
+            throw new ValidationFailedException("answer", "手工题目必须填写 Flag");
+        }
+        return ChallengeRuntimeType.MANUAL;
+    }
+
+    /** 去除首尾空白并将空字符串转换为 null。 */
+    private String trimToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    /** 校验更新后的 Flag 模式仍然完整，禁止手工 Flag 与容器字段混用。 */
+    private void validateRuntimeState(Challenge challenge) {
+        boolean complete = !blank(challenge.getDockerImage()) && !blank(challenge.getDockerTag())
+                && !blank(challenge.getFlagEnvName()) && !blank(challenge.getFlagPrefix());
+        boolean empty = blank(challenge.getDockerImage()) && blank(challenge.getDockerTag())
+                && blank(challenge.getFlagEnvName()) && blank(challenge.getFlagPrefix());
+        if (complete) {
+            if (challenge.getAnswerSecret() != null) {
+                throw new ValidationFailedException("answer", "容器题目不能同时配置手工 Flag");
+            }
+            challenge.setRuntimeType(ChallengeRuntimeType.DOCKER);
+            return;
+        }
+        if (empty) {
+            challenge.setRuntimeType(ChallengeRuntimeType.MANUAL);
+            return;
+        }
+        throw new ValidationFailedException("dockerImage",
+                "Docker 镜像、标签、Flag 环境变量和 Flag 头必须同时填写");
+    }
+
+    /** 判断字符串为空。 */
+    private boolean blank(String value) {
+        return value == null || value.isBlank();
     }
 
     /** 清理题目相关缓存。 */

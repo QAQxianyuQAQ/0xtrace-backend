@@ -28,4 +28,7 @@ public class TraceQuestProperties {
 
     @NestedConfigurationProperty
     private final BootstrapProperties bootstrap = new BootstrapProperties();
+
+    @NestedConfigurationProperty
+    private final RuntimeProperties runtime = new RuntimeProperties();
 }

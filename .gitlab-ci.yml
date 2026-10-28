@@ -1,4 +1,4 @@
-# TraceQuest 后端流水线：lint → 编译 → 单元测试 → 集成测试 → 镜像 → 推送 → 分环境部署
+# TraceQuest 后端流水线：lint → 编译 → 单元测试 → 集成测试 → 镜像 → 推送
 stages:
   - lint
   - build
@@ -6,7 +6,6 @@ stages:
   - integration-test
   - package
   - push
-  - deploy
 
 variables:
   MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
@@ -85,36 +84,4 @@ push-image:
     - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" .
     - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
 
-# 7. 部署：staging 自动，production 需人工确认
-# 部署凭据 KUBE_CONFIG（base64 编码的 kubeconfig）需配置为受保护的 CI 变量；
-# 未配置时跳过部署任务，避免出现无意义的失败流水线。
-.kubectl-base: &kubectl-base
-  image: bitnami/kubectl:latest
-  before_script:
-    - mkdir -p "$HOME/.kube"
-    - printf '%s' "$KUBE_CONFIG" | base64 -d > "$HOME/.kube/config"
-    - chmod 600 "$HOME/.kube/config"
-
-deploy-staging:
-  <<: *kubectl-base
-  stage: deploy
-  environment:
-    name: staging
-  rules:
-    - if: '$KUBE_CONFIG && $CI_COMMIT_BRANCH =~ /^(main|master|release\/.*)$/'
-  script:
-    - kubectl -n tracequest-staging set image deployment/tracequest-backend backend="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
-    - kubectl -n tracequest-staging rollout status deployment/tracequest-backend --timeout=180s
-
-deploy-production:
-  <<: *kubectl-base
-  stage: deploy
-  environment:
-    name: production
-  allow_failure: false
-  rules:
-    - if: '$KUBE_CONFIG && $CI_COMMIT_TAG'
-      when: manual
-  script:
-    - kubectl -n tracequest set image deployment/tracequest-backend backend="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
-    - kubectl -n tracequest rollout status deployment/tracequest-backend --timeout=180s
+# 单机 Docker 部署由受控运维流程拉取镜像后执行 docker compose up -d。
