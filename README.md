@@ -162,8 +162,8 @@ controller、service、repository 三层与 dto/vo 一样按功能模块分目�
 
 - **队伍与计分**：队伍和成员关系都带 `event_id`，同一账号可为不同赛事加入不同队伍；提交时必须属于题目所属赛事的队伍，`solves(subject_key, challenge_id)` 按队伍主体唯一计分，榜单只提供队伍维度。
 - **Docker 题目**：每个队伍同时只能运行一个容器，启动时注入 `flag头{BCrypt(队伍名称)}`；容器内部端口从镜像 `EXPOSE` 自动解析，宿主端口由 Docker 随机分配。容器默认存活 1 小时，仅在剩余不超过 30 分钟时允许再延长 1 小时；选手提交非本队 Flag 时记录 WARN 并返回 `403 FLAG_OWNER_MISMATCH`，内容为“串通flag并不是好习惯”。
-- **公网连接**：公网 443 专用于 frp 将选手的 WSS 请求转发到内网题目容器网关；REST 先签发一次性票据，浏览器再通过 `/api/v1/challenge-connections` 建立二进制 WebSocket。后端在内部网络连接容器 TCP，不向客户端暴露容器 IP。
-- **其它服务端口**：REST API 和 MinIO 可以使用各自的公网端口。默认 REST 为 8080，MinIO 为 9000/9001；MinIO 预签名地址必须与浏览器实际访问的端口完全一致。frp 示例见 [`deploy/frp/frpc.toml.example`](deploy/frp/frpc.toml.example)。
+- **公网连接**：整套系统运行在内网，REST、WSS 和 MinIO 全部由本机 frpc 主动穿透到公网 frps。443 用于 WSS，8080 用于 REST，9000/9001 用于 MinIO。
+- **内部数据服务**：MySQL 和 Redis 只保留在内部 Docker 网络，不配置 frp 代理。MinIO 预签名地址必须与通过 frpc 暴露的公网 Host 和端口完全一致。frp 示例见 [`deploy/frp/frpc.toml.example`](deploy/frp/frpc.toml.example)。
 - **幂等**：`Idempotency-Key` 请求头由 `IdempotentAspect` 统一处理，命中同键同内容时回放首次响应，同键不同内容返回 `409 IDEMPOTENCY_CONFLICT`；请求体中的 `requestId` 亦可用于重放定位。
 - **并发控制**：`solves` 唯一约束 + 基于 Redis 的分布式锁（`DistributedLockAspect`）串行化同一账号的解题写路径。
 - **限流**：登录、提交、位置核验与后台写操作通过 `RateLimitAspect` 与 Redis 计数器限流，超限返回 `429` 与 `Retry-After`。

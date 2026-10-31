@@ -200,7 +200,7 @@ Examples that MUST be extracted:
   7. Deploy the single-host Docker Compose stack (production gate required)
 - **Docker**: Multi-stage builds; final image based on a slim JRE 25 runtime; non-root user.
 - **Runtime host**: Exactly one Docker Engine and one application replica are supported. Challenge containers join the internal runtime network and do not publish public ports.
-- **Public edge**: Port 443 is reserved for the frp WSS bridge to internal challenge containers. Other services may expose independent public ports, such as REST on 8080 and MinIO on 9000.
+- **Public edge**: The entire stack runs on the internal Docker host. All externally reachable modules MUST be exposed through an outbound frpc tunnel to public frps: WSS on 443, REST on 8080, and MinIO on 9000/9001. MySQL and Redis MUST remain internal and MUST NOT have frp proxies.
 
 ---
 

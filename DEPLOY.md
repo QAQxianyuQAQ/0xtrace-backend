@@ -2,7 +2,7 @@
 
 > 更新时间：2026-10-28
 >
-> 适用架构：单台内网 Docker Engine + Docker Compose；REST、MinIO 使用独立公网端口，公网 443 专用于题目容器 WSS
+> 适用架构：整套系统运行在单台内网 Docker Engine；所有对外模块通过本机 frpc 穿透到公网 frps
 
 本文描述 TraceQuest 后端当前的正式部署方式。项目只支持单台 Docker Engine 和单个应用实例，不支持 Kubernetes。
 
@@ -10,31 +10,30 @@
 
 ```text
 选手浏览器
-    ├── REST :8080 ─────────────────────────► tracequest-backend
-    ├── MinIO :9000/9001 ───────────────────► tracequest-minio
-    └── WSS :443
+    ├── REST  :8080
+    ├── WSS   :443
+    └── MinIO :9000/9001
+          │
           ▼
         公网 frps
           │
           ▼
         内网 frpc
-          │
-          ▼
-        tracequest-backend
-          │ TCP
-          ▼
-        选手容器实例
-          └── tracequest-runtime 内部 Docker 网络
+          ├── 127.0.0.1:8080 -> tracequest-backend（REST/WSS 网关）
+          └── 127.0.0.1:9000/9001 -> tracequest-minio
+
+tracequest-runtime 内部 Docker 网络
+    └── 选手题目容器（不发布公网端口）
 ```
 
 基础 Compose 容器：
 
 | 容器 | 作用 | 端口策略 |
 |---|---|---|
-| `tracequest-backend` | Spring Boot 应用 | 默认开放宿主机 8080 提供 REST 和 WSS 网关 |
+| `tracequest-backend` | Spring Boot 应用 | 仅绑定 127.0.0.1:8080，由 frpc 暴露 REST/WSS |
 | `tracequest-mysql` | MySQL 8.0，权威数据源 | 不发布宿主机端口 |
 | `tracequest-redis` | 缓存、限流、会话黑名单、分布式锁 | 不发布宿主机端口 |
-| `tracequest-minio` | 附件、封面等对象存储 | 默认开放宿主机 9000/9001 |
+| `tracequest-minio` | 附件、封面等对象存储 | 仅绑定 127.0.0.1:9000/9001，由 frpc 暴露 |
 
 动态容器：
 
@@ -58,16 +57,15 @@
 - Docker Engine 24+。
 - Docker Compose v2。
 - 公网侧已部署可用的 frps。
-- 已准备两个域名，例如 `tq.example.com` 和 `minio.example.com`。
+- 已准备 WSS 域名（例如 `tq.example.com`）或公网 frps 地址。
 
 网络要求：
 
 - 内网服务器可以访问 Docker Hub、Maven 中央仓库和系统软件源。
-- 内网 frpc 可以主动连接公网 frps。
-- 公网 443 专用于 frp 的题目容器 WSS 转发。
-- REST API 默认使用公网 8080。
-- MinIO 默认使用公网 9000，控制台使用 9001。
-- MySQL 和 Redis 不发布公网端口。
+- 内网 frpc 必须能主动访问公网 frps。
+- 公网 frps 默认暴露 443、8080、9000/9001。
+- 内网服务器本身不直接开放 8080、9000、9001。
+- MySQL 和 Redis 只在内部 Docker 网络，不配置 frp 代理。
 
 ## 3. 安装 Docker Engine 与 Compose
 
@@ -139,11 +137,11 @@ openssl rand -base64 32  # TQ_ADMIN_PASSWORD
 | 变量 | 说明 |
 |---|---|
 | `TQ_IMAGE` | 应用镜像名称 |
-| `TQ_SERVER_PORT` | REST API 公网端口，默认 8080 |
+| `TQ_SERVER_PORT` | 内网后端回环端口，默认 8080；由 frpc 映射为公网 8080 |
 | `TQ_DOCKER_GID` | 宿主机 Docker Socket 的组 ID |
 | `TQ_DB_*` | MySQL 地址、账号、密码与数据库名 |
 | `TQ_REDIS_*` | Redis 地址、密码 |
-| `TQ_MINIO_ENDPOINT` | 必须是浏览器可访问的 MinIO 公网地址，例如 `http://<服务器IP>:9000` |
+| `TQ_MINIO_ENDPOINT` | 必须是 frpc 暴露后的公网地址，例如 `http://<公网FRP地址>:9000` |
 | `TQ_MINIO_ACCESS_KEY` | MinIO 访问密钥 |
 | `TQ_MINIO_SECRET_KEY` | MinIO 私钥 |
 | `TQ_JWT_SECRET` | JWT 签名密钥 |
@@ -171,9 +169,9 @@ TQ_DOCKER_GID=<Socket组ID>
 
 应用镜像以非 root UID 10001 运行，依靠补充组访问 Docker Socket。Docker Socket 等价于宿主机高权限接口，生产环境建议在前面增加只允许镜像拉取、容器创建、检查、停止和删除的 Docker Socket Proxy。
 
-## 6. 配置 frp：公网 443 到题目容器 WSS
+## 6. 配置 frpc：穿透全部对外模块
 
-参考 [deploy/frp/frpc.toml.example](deploy/frp/frpc.toml.example)，公网 443 只配置题目容器 WebSocket 转发：
+参考 [deploy/frp/frpc.toml.example](deploy/frp/frpc.toml.example)，配置三条 TCP/HTTPS 代理：
 
 ```toml
 serverAddr = "frp.example.com"
@@ -188,6 +186,27 @@ type = "https"
 localIP = "127.0.0.1"
 localPort = 8080
 customDomains = ["tq.example.com"]
+
+[[proxies]]
+name = "tracequest-rest"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8080
+remotePort = 8080
+
+[[proxies]]
+name = "tracequest-minio-api"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 9000
+remotePort = 9000
+
+[[proxies]]
+name = "tracequest-minio-console"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 9001
+remotePort = 9001
 ```
 
 要求在 frps 侧完成：
@@ -195,18 +214,20 @@ customDomains = ["tq.example.com"]
 1. 为 `tq.example.com` 配置 TLS 证书。
 2. 将 `tq.example.com` 解析到公网 frps。
 3. 确保 HTTPS 代理透传 WebSocket Upgrade 请求。
-4. 配置文件级反向代理时只允许 `/api/v1/challenge-connections`。
+4. 允许 frpc 使用远端端口 8080、9000、9001。
+5. 如 frps 配置了 `allowPorts`，把 8080、9000、9001 加入白名单。
+6. 不要为内网 MySQL 3306 或 Redis 6379 创建任何 frp proxy。
 
 对应环境变量：
 
 ```dotenv
 TQ_PUBLIC_WSS_URL=wss://tq.example.com/api/v1/challenge-connections
-TQ_MINIO_ENDPOINT=http://<服务器IP>:9000
+TQ_MINIO_ENDPOINT=http://<公网FRP地址>:9000
 # REST 直接使用 HTTP 8080 时为 false；REST 通过 HTTPS 端口/反向代理时为 true
 TQ_COOKIE_SECURE=false
 ```
 
-REST API 使用公网 8080，MinIO 使用公网 9000/9001。它们都不经过 frp 的 443 端口。
+公网 REST、WSS、MinIO 都由本机 frpc 主动穿透，内网宿主机本身不直接开放这些端口。MySQL 和 Redis 只在 Docker 内部网络中访问。
 
 ## 7. 数据库迁移
 
@@ -375,25 +396,24 @@ docker network inspect tracequest-runtime \
 
 ## 12. 防火墙与来源校验
 
-公网防火墙建议：
+内网运行主机的防火墙建议：
 
 ```bash
 sudo ufw default deny incoming
 sudo ufw allow 22/tcp
-sudo ufw allow 443/tcp
-sudo ufw allow 8080/tcp
-sudo ufw allow 9000/tcp
-sudo ufw allow 9001/tcp
 sudo ufw enable
 ```
 
-端口用途：
+内网主机只需允许 SSH 入站，并允许 frpc 主动出站连接 frps。不要在内网主机上放行 8080、9000、9001，因为这些服务只绑定 `127.0.0.1`。
 
-- `443`：仅用于 frp 的题目容器 WSS 转发。
+公网 frps 的防火墙按实际需要开放：
+
+- `443`：WSS。
 - `8080`：REST API。
 - `9000`：MinIO S3 API 和预签名下载。
-- `9001`：MinIO 管理控制台，可按需限制为管理员 IP。
-- MySQL 和 Redis 不发布公网端口。
+- `9001`：MinIO 管理控制台，可按需限制来源 IP。
+
+MySQL 和 Redis 不配置 frp 代理，也不应在公网 frps 上开放。
 
 前端建议与 API 使用同一公网域名，通过同域路径访问。当前 CORS 默认关闭，Cookie 使用 `SameSite=Strict`，因此不建议把前端和 API 部署成互不相关的跨站域名。
 
@@ -514,9 +534,12 @@ docker run --rm \
 - [ ] 只存在一台 Docker Engine 和一个应用实例。
 - [ ] Docker Socket 仅授予应用运行所需权限。
 - [ ] `tracequest-runtime` 是内部网络。
+- [ ] 内网主机 8080、9000、9001 只绑定 `127.0.0.1`。
 - [ ] REST API 在配置的公网端口 8080 可访问。
 - [ ] MinIO 在配置的公网端口 9000 可访问，9001 按需限制访问来源。
 - [ ] 公网 443 只用于题目容器 WSS 转发。
+- [ ] frpc 已配置 REST、WSS、MinIO 穿透。
+- [ ] MySQL 3306 和 Redis 6379 没有 frp 代理。
 - [ ] frp 已透传 WebSocket Upgrade。
 - [ ] `TQ_PUBLIC_WSS_URL` 使用公网 WSS 域名。
 - [ ] `TQ_MINIO_ENDPOINT` 使用浏览器实际访问的 MinIO 公网地址，默认包含 `:9000`。

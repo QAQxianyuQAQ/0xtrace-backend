@@ -1,12 +1,12 @@
-# TraceQuest 内网 frpc 示例：443 专用于选手到内网题目容器的 WSS 转发。
-# REST API 与 MinIO 使用各自的公网端口，不经过这个 frp 代理。
+# TraceQuest 内网 frpc 示例：所有对外模块均由本机 frpc 主动穿透。
+# MySQL 和 Redis 只在内部 Docker 网络使用，禁止为本机 3306/6379 创建 proxy。
 # 请将 serverAddr、serverPort、认证信息和域名替换为实际部署值。
 serverAddr = "frp.example.com"
 serverPort = 443
 auth.method = "token"
 auth.token = "<replace-with-frp-token>"
 
-# 该域名在公网 443 上只用于题目容器 WebSocket；应用后端仍可单独开放 8080 提供 REST
+# 公网 443：题目容器 WSS
 [[proxies]]
 name = "tracequest-wss"
 type = "https"
@@ -14,4 +14,26 @@ localIP = "127.0.0.1"
 localPort = 8080
 customDomains = ["tq.example.com"]
 
-# 如需严格限制只有 WebSocket 路径可达，请在 8080 前增加路径级反向代理。
+# 公网 8080：REST API
+[[proxies]]
+name = "tracequest-rest"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8080
+remotePort = 8080
+
+# 公网 9000：MinIO S3 API 与预签名下载
+[[proxies]]
+name = "tracequest-minio-api"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 9000
+remotePort = 9000
+
+# 公网 9001：MinIO 控制台，可按需删除或在 frps 限制来源 IP
+[[proxies]]
+name = "tracequest-minio-console"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 9001
+remotePort = 9001
