@@ -11,6 +11,15 @@ import org.apache.ibatis.annotations.Select;
 /** 解题记录持久化接口，提供计分与排行榜聚合查询。 */
 public interface SolveMapper extends BaseMapper<Solve> {
 
+    /** 进度仅统计同一赛事中仍已发布的题目，历史积分不受上下线影响。 */
+    @Select("""
+            SELECT COUNT(DISTINCT s.challenge_id)
+            FROM solves s JOIN challenges c ON c.id = s.challenge_id
+            WHERE s.subject_key = #{subjectKey}
+              AND c.event_id = #{eventId} AND c.status = 'PUBLISHED'
+            """)
+    long countPublishedSolved(@Param("eventId") String eventId, @Param("subjectKey") String subjectKey);
+
     /**
      * 队伍维度排行榜聚合：总分降序、解题数降序、最后解题时间升序。
      *

@@ -187,9 +187,11 @@ public class SubmissionServiceImpl implements SubmissionService {
 
         // 6. 分页查询并批量装配题目信息
         IPage<Submission> page = submissionMapper.selectPage(new Page<>(query.page(), query.pageSize()), wrapper);
-        Map<String, Challenge> challenges = challengeMapper.selectBatchIds(
-                        page.getRecords().stream().map(Submission::getChallengeId).distinct().toList())
-                .stream().collect(Collectors.toMap(Challenge::getId, Function.identity()));
+        List<String> pageChallengeIds = page.getRecords().stream()
+                .map(Submission::getChallengeId).distinct().toList();
+        Map<String, Challenge> challenges = pageChallengeIds.isEmpty() ? Map.of()
+                : challengeMapper.selectBatchIds(pageChallengeIds).stream()
+                        .collect(Collectors.toMap(Challenge::getId, Function.identity()));
         List<SubmissionVO> items = page.getRecords().stream()
                 .map(submission -> toVO(submission, challenges.get(submission.getChallengeId())))
                 .toList();
@@ -224,16 +226,20 @@ public class SubmissionServiceImpl implements SubmissionService {
         long total = challengeMapper.selectCount(Wrappers.<Challenge>lambdaQuery()
                 .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED)
                 .eq(Challenge::getEventId, event.getId()));
-        Map<String, String> codeById = challengeMapper.selectBatchIds(
-                        solves.stream().map(Solve::getChallengeId).distinct().toList())
-                .stream().collect(Collectors.toMap(Challenge::getId, Challenge::getCode));
+        List<String> solvedChallengeIds = solves.stream().map(Solve::getChallengeId).distinct().toList();
+        Map<String, String> codeById = solvedChallengeIds.isEmpty() ? Map.of()
+                : challengeMapper.selectBatchIds(solvedChallengeIds).stream()
+                        .filter(challenge -> event.getId().equals(challenge.getEventId())
+                                && challenge.getStatus() == ChallengeStatus.PUBLISHED)
+                        .collect(Collectors.toMap(Challenge::getId, Challenge::getCode));
         List<String> solvedCodes = solves.stream()
                 .map(solve -> codeById.get(solve.getChallengeId()))
                 .filter(java.util.Objects::nonNull)
+                .distinct()
                 .toList();
 
         // 5. 组装响应，含赛事队伍信息与解题编号列表
-        return new MyProgressVO(solves.size(), (int) total, score, team.getId(),
+        return new MyProgressVO(solvedCodes.size(), (int) total, score, team.getId(),
                 team.getName(), solvedCodes);
     }
 
@@ -304,8 +310,7 @@ public class SubmissionServiceImpl implements SubmissionService {
 
     /** 统计进度，用于幂等回放响应。 */
     private ProgressVO progressOf(String eventId, String subjectKey) {
-        long solved = solveMapper.selectCount(Wrappers.<Solve>lambdaQuery()
-                .eq(Solve::getSubjectKey, subjectKey));
+        long solved = solveMapper.countPublishedSolved(eventId, subjectKey);
         long total = challengeMapper.selectCount(Wrappers.<Challenge>lambdaQuery()
                 .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED)
                 .eq(Challenge::getEventId, eventId));

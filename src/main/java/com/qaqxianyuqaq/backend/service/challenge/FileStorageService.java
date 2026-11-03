@@ -6,6 +6,7 @@ import com.qaqxianyuqaq.backend.domain.entity.ChallengeFile;
 import com.qaqxianyuqaq.backend.security.UserPrincipal;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.InputStream;
 import java.util.List;
 
 /** 题目附件与封面服务：所有二进制内容经 MinIO 存储。 */
@@ -32,11 +33,11 @@ public interface FileStorageService {
     /** 移除封面。 */
     void deleteCover(String code);
 
-    /** 按文件 ID 读取文件元数据，不存在时抛出 404。 */
-    ChallengeFile requireFile(String fileId);
+    /** 按文件 ID 与当前用户校验题目可见性，不存在或不可见时抛出 404。 */
+    ChallengeFile requireFile(String fileId, UserPrincipal viewer);
 
-    /** 生成短效预签名下载地址。 */
-    String presignedDownloadUrl(ChallengeFile file);
+    /** 打开 MinIO 内容流，调用方负责关闭。 */
+    InputStream openFile(ChallengeFile file);
 
     /** 删除题目下的全部文件（数据库行与对象存储对象），供题目删除时调用。 */
     void deleteAllFiles(String challengeId);

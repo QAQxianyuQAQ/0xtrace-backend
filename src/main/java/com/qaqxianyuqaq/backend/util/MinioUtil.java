@@ -2,6 +2,7 @@ package com.qaqxianyuqaq.backend.util;
 
 import io.minio.BucketExistsArgs;
 import io.minio.GetPresignedObjectUrlArgs;
+import io.minio.GetObjectArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
@@ -42,6 +43,11 @@ public final class MinioUtil {
                 .stream(stream, size, -1)
                 .contentType(contentType == null ? "application/octet-stream" : contentType)
                 .build());
+    }
+
+    /** 打开对象流，调用方必须关闭以归还存储连接。 */
+    public static InputStream getObject(MinioClient client, String bucket, String storageKey) throws Exception {
+        return client.getObject(GetObjectArgs.builder().bucket(bucket).object(storageKey).build());
     }
 
     /** 删除对象，删除失败由调用方决定是否忽略。 */

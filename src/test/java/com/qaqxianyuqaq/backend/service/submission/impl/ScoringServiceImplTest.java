@@ -82,7 +82,8 @@ class ScoringServiceImplTest {
     @DisplayName("首解正确时按基础分与首解加分合计计分")
     void shouldAwardFirstSolveBonus() {
         when(solveMapper.selectOne(any(Wrapper.class))).thenReturn(null);
-        when(solveMapper.selectCount(any(Wrapper.class))).thenReturn(0L, 1L);
+        when(solveMapper.selectCount(any(Wrapper.class))).thenReturn(0L);
+        when(solveMapper.countPublishedSolved("evt_1", "team_1")).thenReturn(1L);
         when(challengeMapper.selectCount(any(Wrapper.class))).thenReturn(12L);
 
         SubmissionResultVO result = scoringService.award(principal, challenge,
@@ -94,6 +95,7 @@ class ScoringServiceImplTest {
         assertThat(result.pointsAwarded()).isEqualTo(500);
         assertThat(result.solvePlace()).isEqualTo(1);
         assertThat(result.progress().total()).isEqualTo(12);
+        assertThat(result.progress().solved()).isEqualTo(1);
         verify(solveMapper).insert(any(Solve.class));
         verify(cacheService).deleteByPrefix(any());
     }
@@ -109,7 +111,7 @@ class ScoringServiceImplTest {
         existing.setSolvePlace(1);
         existing.setSource(SolveSource.ANSWER);
         when(solveMapper.selectOne(any(Wrapper.class))).thenReturn(existing);
-        when(solveMapper.selectCount(any(Wrapper.class))).thenReturn(1L);
+        when(solveMapper.countPublishedSolved("evt_1", "team_1")).thenReturn(1L);
         when(challengeMapper.selectCount(any(Wrapper.class))).thenReturn(12L);
 
         SubmissionResultVO result = scoringService.award(principal, challenge,
@@ -125,7 +127,7 @@ class ScoringServiceImplTest {
     @DisplayName("错误答案不产生积分也不写入解题记录")
     void shouldNotScoreWhenIncorrect() {
         when(solveMapper.selectOne(any(Wrapper.class))).thenReturn(null);
-        when(solveMapper.selectCount(any(Wrapper.class))).thenReturn(0L);
+        when(solveMapper.countPublishedSolved("evt_1", "team_1")).thenReturn(0L);
         when(challengeMapper.selectCount(any(Wrapper.class))).thenReturn(12L);
 
         SubmissionResultVO result = scoringService.award(principal, challenge,

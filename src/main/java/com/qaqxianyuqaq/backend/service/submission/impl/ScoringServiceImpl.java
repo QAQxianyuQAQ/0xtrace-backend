@@ -195,8 +195,7 @@ public class ScoringServiceImpl implements ScoringService {
 
     /** 统计指定赛事队伍与赛事题目的解题进度。 */
     private ProgressVO progress(String eventId, String teamId) {
-        long solved = solveMapper.selectCount(Wrappers.<Solve>lambdaQuery()
-                .eq(Solve::getSubjectKey, teamId));
+        long solved = solveMapper.countPublishedSolved(eventId, teamId);
         long total = challengeMapper.selectCount(Wrappers.<Challenge>lambdaQuery()
                 .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED)
                 .eq(Challenge::getEventId, eventId));

@@ -89,11 +89,20 @@ public class ContestantServiceImpl implements ContestantService {
 
     @Override
     public PageVO<ContestantVO> page(String q, String status, String teamId, PageQueryDTO query) {
-        // 1. 读取当前赛事并组装选手筛选条件
-        EventConfig event = eventService.requireCurrent();
+        // 1. 账号独立于赛事存在；无赛事时仍可读取账号，但不装配队伍
+        EventConfig event;
+        try {
+            event = eventService.requireCurrent();
+        } catch (NotFoundException missingEvent) {
+            event = null;
+        }
+        String eventId = event == null ? null : event.getId();
+        if (eventId == null && teamId != null && !teamId.isBlank()) {
+            return new PageVO<>(List.of(), PageUtil.of(query.page(), query.pageSize(), 0));
+        }
         List<String> requestedTeamUserIds = teamId == null || teamId.isBlank() ? null
                 : teamMemberMapper.selectList(Wrappers.<TeamMember>lambdaQuery()
-                        .eq(TeamMember::getEventId, event.getId())
+                        .eq(TeamMember::getEventId, eventId)
                         .eq(TeamMember::getTeamId, teamId))
                 .stream().map(TeamMember::getUserId).toList();
         if (requestedTeamUserIds != null && requestedTeamUserIds.isEmpty()) {
@@ -108,13 +117,13 @@ public class ContestantServiceImpl implements ContestantService {
 
         // 2. 关键字同时匹配用户名与队伍名称
         if (q != null && !q.isBlank()) {
-            List<String> matchedTeamIds = teamMapper.selectList(Wrappers.<Team>lambdaQuery()
-                            .eq(Team::getEventId, event.getId())
+            List<String> matchedTeamIds = eventId == null ? List.of() : teamMapper.selectList(Wrappers.<Team>lambdaQuery()
+                            .eq(Team::getEventId, eventId)
                             .like(Team::getName, q)).stream()
                     .map(Team::getId).toList();
             List<String> matchedUserIds = matchedTeamIds.isEmpty() ? List.of()
                     : teamMemberMapper.selectList(Wrappers.<TeamMember>lambdaQuery()
-                            .eq(TeamMember::getEventId, event.getId())
+                            .eq(TeamMember::getEventId, eventId)
                             .in(TeamMember::getTeamId, matchedTeamIds))
                     .stream().map(TeamMember::getUserId).toList();
             wrapper.and(condition -> {
@@ -127,7 +136,7 @@ public class ContestantServiceImpl implements ContestantService {
 
         // 3. 分页查询并按当前赛事成员关系批量装配队伍名称
         IPage<User> page = userMapper.selectPage(new Page<>(query.page(), query.pageSize()), wrapper);
-        Map<String, Team> membershipTeams = loadMembershipTeams(event.getId(), page.getRecords());
+        Map<String, Team> membershipTeams = eventId == null ? Map.of() : loadMembershipTeams(eventId, page.getRecords());
         List<ContestantVO> items = page.getRecords().stream()
                 .map(user -> toVO(user, membershipTeams.get(user.getId())))
                 .toList();

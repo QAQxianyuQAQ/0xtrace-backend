@@ -167,8 +167,10 @@ public class ChallengeServiceImpl implements ChallengeService {
     @Override
     public PageVO<AdminChallengeVO> listAdmin(String q, String status, String category,
                                                             PageQueryDTO query) {
-        // 1. 组装后台筛选条件：关键字匹配编号或标题
+        // 1. 仅检索当前赛事题目，关键字匹配编号或标题
+        String eventId = eventService.requireCurrent().getId();
         var wrapper = Wrappers.<Challenge>lambdaQuery()
+                .eq(Challenge::getEventId, eventId)
                 .and(q != null && !q.isBlank(), condition -> condition
                         .like(Challenge::getCode, q)
                         .or()
@@ -272,6 +274,9 @@ public class ChallengeServiceImpl implements ChallengeService {
         // 3. 逐字段应用补丁，未传字段保持不变
         applyUpdate(challenge, request);
         validateRuntimeState(challenge);
+        if (challenge.getStatus() == ChallengeStatus.PUBLISHED) {
+            validatePublishable(challenge);
+        }
 
         // 4. 版本号自增后落库
         challenge.setVersion(challenge.getVersion() + 1);
@@ -315,12 +320,7 @@ public class ChallengeServiceImpl implements ChallengeService {
 
         // 2. 发布前校验题目完整性，避免上线后无法判题
         if (target == ChallengeStatus.PUBLISHED) {
-            validateRequired(challenge.getCode(), challenge.getTitle(), challenge.getCategory(),
-                    challenge.getDifficulty(), challenge.getPoints());
-            if (challenge.getRuntimeType() == ChallengeRuntimeType.MANUAL
-                    && (challenge.getAnswerSecret() == null || challenge.getAnswerSecret().isBlank())) {
-                throw new ValidationFailedException("answer", "发布前必须配置题目答案");
-            }
+            validatePublishable(challenge);
             if (challenge.getPublishedAt() == null) {
                 challenge.setPublishedAt(TimeUtil.now());
             }
@@ -358,6 +358,17 @@ public class ChallengeServiceImpl implements ChallengeService {
         }
         if (points == null || points <= 0) {
             throw new ValidationFailedException("points", "分值必须为正整数");
+        }
+    }
+
+    /** 所有发布入口复用同一套完整性校验。 */
+    private void validatePublishable(Challenge challenge) {
+        validateRuntimeState(challenge);
+        validateRequired(challenge.getCode(), challenge.getTitle(), challenge.getCategory(),
+                challenge.getDifficulty(), challenge.getPoints());
+        if (challenge.getRuntimeType() == ChallengeRuntimeType.MANUAL
+                && (challenge.getAnswerSecret() == null || challenge.getAnswerSecret().isBlank())) {
+            throw new ValidationFailedException("answer", "发布前必须配置题目答案");
         }
     }
 

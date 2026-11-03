@@ -6,6 +6,8 @@ import com.qaqxianyuqaq.backend.domain.vo.admin.MetricsVO;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.qaqxianyuqaq.backend.domain.entity.Challenge;
+import com.qaqxianyuqaq.backend.domain.entity.Solve;
+import com.qaqxianyuqaq.backend.domain.entity.Submission;
 import com.qaqxianyuqaq.backend.domain.entity.User;
 import com.qaqxianyuqaq.backend.domain.enums.AccountStatus;
 import com.qaqxianyuqaq.backend.domain.enums.ChallengeStatus;
@@ -54,9 +56,14 @@ public class DashboardServiceImpl implements DashboardService {
 
     @Override
     public DashboardVO dashboard() {
-        // 1. 统计题目数量与上线题目数量
-        int challengeCount = Math.toIntExact(challengeMapper.selectCount(null));
+        // 1. 统计当前赛事题目数量与上线题目数量
+        var event = eventService.publicEvent();
+        List<String> challengeIds = challengeMapper.selectList(Wrappers.<Challenge>lambdaQuery()
+                        .eq(Challenge::getEventId, event.id()))
+                .stream().map(Challenge::getId).toList();
+        int challengeCount = challengeIds.size();
         int publishedCount = Math.toIntExact(challengeMapper.selectCount(Wrappers.<Challenge>lambdaQuery()
+                .eq(Challenge::getEventId, event.id())
                 .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED)));
 
         // 2. 统计账号数量与启用账号数量
@@ -66,9 +73,11 @@ public class DashboardServiceImpl implements DashboardService {
                 .eq(User::getRole, UserRole.CONTESTANT)
                 .eq(User::getStatus, AccountStatus.ACTIVE)));
 
-        // 3. 统计解题数与提交数
-        int solvedCount = Math.toIntExact(solveMapper.selectCount(null));
-        int submissionCount = Math.toIntExact(submissionMapper.selectCount(null));
+        // 3. 仅统计当前赛事题目的解题数与提交数，空赛事不发送 IN ()
+        int solvedCount = challengeIds.isEmpty() ? 0 : Math.toIntExact(solveMapper.selectCount(
+                Wrappers.<Solve>lambdaQuery().in(Solve::getChallengeId, challengeIds)));
+        int submissionCount = challengeIds.isEmpty() ? 0 : Math.toIntExact(submissionMapper.selectCount(
+                Wrappers.<Submission>lambdaQuery().in(Submission::getChallengeId, challengeIds)));
 
         // 4. 读取近期活动摘要（审计日志最近 10 条）
         List<ActivityVO> activities = auditService
@@ -81,6 +90,6 @@ public class DashboardServiceImpl implements DashboardService {
         // 5. 组装总览响应
         MetricsVO metrics = new MetricsVO(challengeCount, publishedCount, contestantCount,
                 activeContestantCount, solvedCount, submissionCount);
-        return new DashboardVO(eventService.publicEvent(), metrics, activities);
+        return new DashboardVO(event, metrics, activities);
     }
 }

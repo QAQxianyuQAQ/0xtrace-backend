@@ -1,9 +1,9 @@
 # TraceQuest 前端 API 文档
 
-> 适用版本：当前 `main` 工作区
-> 盘点日期：2026-10-28
+> 适用版本：`fix/integration-review-20261103`（基线 `db9e249`，未合并 main）
+> 盘点日期：2026-11-03
 > API 根路径：`/api/v1`
-> 部署拓扑：整套系统运行在内网；REST 8080、WSS 443、MinIO 9000/9001 均由本机 frpc 穿透到公网 frps，MySQL 与 Redis 不做穿透
+> 部署拓扑：REST/WSS 的对外入口按部署配置建立；文件由后端同源鉴权转发，MinIO 9000/9001 仅需内网访问，不需为浏览器下载做公网穿透。MySQL/Redis 不对公网开放。
 
 本文档以当前后端代码为准。旧版原型 API 和已废弃字段不应继续使用。
 
@@ -596,7 +596,7 @@ Idempotency-Key: <uuid>
 | `completion` | `first_solve` / `already_solved` / `null` |
 | `source` | `answer` / `location` |
 
-重复提交已解出的题目不会重复计分。
+重复提交已解出的题目返回 `correct + already_solved` 和原始得分/名次，不再加分；`pointsAwarded` 是该题历史所得，不是本次新增。`progress.solved/total` 按该赛事当前 published 题目统计，与 `/me/progress` 一致。
 
 ### 7.2 我的进度
 
@@ -615,6 +615,8 @@ Idempotency-Key: <uuid>
 }
 ```
 
+`solved`、`solvedChallengeCodes`、`total` 仅统计指定赛事当前 `published` 题，`paused` 题不计入进度分子/分母，恢复发布后重新计入。`score` 保留该赛事历史解题基础分及奖励，暂停题不扣回历史分；当前不含人工积分调整，可能与含调分的榜单分数不同。未组队或零解题返回 200 零值，空批量查询不会生成 SQL `IN ()`。
+
 ### 7.3 我的提交记录
 
 `GET /api/v1/me/submissions`
@@ -628,6 +630,8 @@ Idempotency-Key: <uuid>
 | `result` | `correct` / `incorrect` |
 | `page` | 页码 |
 | `pageSize` | 每页数量 |
+
+无提交记录或超出最后一页时返回 `200` 的空 `PageVO`，`items: []`；`pagination.total` 保留真实总条数，不将越界页误报为整个赛事没有记录。
 
 ### 7.4 单条提交记录
 
@@ -692,9 +696,11 @@ Idempotency-Key: <uuid>
 
 权限：authenticated
 
-成功返回 `302`，跳转到 MinIO 短效预签名地址。后端不返回 MinIO 密钥。
+成功返回 `200` 同源二进制流，不含 `Location`，不暴露 MinIO 内网地址、密钥或短效签名。每次请求重新校验文件及所属题目：管理员可预览全部状态；选手可读 `published/paused`，`draft/archived` 或已无所属题目的文件返回 404；匿名返回 401。当前不额外检查赛事 OPEN/起止时间。
 
-推荐使用链接或 `location.assign()` 下载：
+响应显式携带 `Content-Length`、`Cache-Control: no-store` 及 UTF-8 原名 `Content-Disposition`；附件强制 `application/octet-stream` 与 `attachment`，封面为保存的图片 MIME 与 `inline`。对象流由 Spring 在响应结束后关闭；本轮不保证 Range/206。浏览器无需直连 MinIO 或配置它的下载 CORS。
+
+可使用同源链接，或鉴权 fetch 后转为 Blob URL 供多文件下载：
 
 ```js
 window.location.assign("/api/v1/files/file_01");
@@ -748,7 +754,7 @@ window.location.assign("/api/v1/files/file_01");
 
 `GET /api/v1/admin/challenges`
 
-查询参数：`q`、`status`、`category`、`page`、`pageSize`。
+查询参数：`q`、`status`、`category`、`page`、`pageSize`。仅返回当前赛事的题目；没有赛事时返回 404，由管理端显示可编辑的空赛事状态。
 
 ### 9.3 在赛事中创建题目
 
@@ -807,7 +813,7 @@ Docker 题：
 
 - `dockerImage`、`dockerTag`、`flagEnvName`、`flagPrefix` 必须同时填写。
 - Docker 题不能再填写 `answer`。
-- 手工 Flag 题不能填写任何 Docker 字段。
+- 手工 Flag 题不能填写任何 Docker 字段；即使创建 draft 也必须提供非空 `answer`。
 - 前端不能提交 `containerPort`。
 - Docker 镜像必须声明 TCP `EXPOSE` 端口。
 - `flagPrefix` 只填写头，例如 `sacc`；完整注入值为 `sacc{BCrypt密文}`。
@@ -861,6 +867,8 @@ Docker 题的 `answer` 通常为空。管理端仍不应把环境变量实际值
 ```
 
 切换到 Docker 模式时，一次提交完整的四个 Docker 字段，并不要同时提交 `answer`。
+
+PATCH 应用全部字段后校验最终配置；最终状态为 `published` 时复用 `/publish`、`/resume` 的完整性校验，不能靠 PATCH 状态绕过答案或运行配置要求，已发布题目的普通编辑也受同一规则约束。校验失败返回 400 `VALIDATION_ERROR`，不保存状态或递增 version；过期 version 返回 409。
 
 ### 9.6 发布、暂停、恢复、删除
 
@@ -917,6 +925,8 @@ await fetch(`/api/v1/admin/challenges/WEB-01/attachments`, {
 查看附件：
 
 `GET /api/v1/admin/challenges/{code}/attachments`
+
+返回裸 `FileVO[]`；上传响应为 `{items: FileVO[]}`。当前 `FileVO.size` 是字节数，不是 `sizeBytes`；前端兼容 `sizeBytes ?? size`，不能因为字段名差异丢失文件大小。
 
 删除附件：
 
@@ -1010,7 +1020,7 @@ await fetch(`/api/v1/admin/challenges/WEB-01/attachments`, {
 }
 ```
 
-响应绝不包含密码或密码哈希。
+响应绝不包含密码或密码哈希。账号列表/导出不依赖赛事存在：无赛事仍分页返回全局选手，队伍信息为空；无赛事同时指定 `teamId` 时返回空结果，不伪造跨赛事队伍关系。
 
 ### 10.2 后台排行榜
 
@@ -1039,6 +1049,8 @@ await fetch(`/api/v1/admin/challenges/WEB-01/attachments`, {
 |---|---|---|
 | `GET` | `/api/v1/admin/dashboard` | 赛事、题目、账号、提交与近期活动 |
 | `GET` | `/api/v1/admin/audit-log` | 分页审计日志 |
+
+总览中题目数、已发布题目数、提交数、解题数限定当前赛事；账号数/启用账号数及最近管理动态仍为全局。当前赛事没有题目时正确返回零计数；根本没有赛事时总览返回 404。
 
 审计查询参数：`action`、`entityType`、`actor`、`page`、`pageSize`。
 
@@ -1105,3 +1117,15 @@ remainingSeconds <= 1800
   "service": "tracequest-backend"
 }
 ```
+
+
+## 13. 2026-11-03 联调修复记录
+
+本修复分支更新接口行为时同步维护本文及前端 `tracequest-app/docs/API.md`，不能以历史分支的保证替代当前实现。
+
+- 已修复空提交记录/零解题的 `IN ()`；统一当前赛事 published 进度口径，暂停不扣回历史分。
+- PATCH 发布、恢复发布与编辑已发布题目复用最终配置校验；管理题目列表/总览不再混入其他赛事，无赛事账号查询可用。
+- 文件 GET 从 302 签名改为 200 同源流，补齐题目可见性鉴权，管理上传/列表的字节字段保持 `size`。前端开发网关补齐 `client_max_body_size 60m`。
+- Java 25 Docker 离线 `mvn package`：36 项测试，0 失败/错误；覆盖空查询、进度、发布、账号查询和文件权限/响应流等。
+- 独立 MySQL/Redis/MinIO/Java/Nginx 环境真实 HTTP：45 项通过。包括四队顺序首解名次 1/2/3/4 与得分 500/460/430/405、同队重复不加分、附件字节一致/草稿拒绝、封面增删、QR 撤销、赛事切换与登出。顺序测试不构成并发验收。
+- 本轮未验证浏览器交互、真实摄像头、Docker 靶机/WSS、存储故障补偿、生产并发容量或服务器部署；静态二维码仍可被转发，不能证明现场到达。未修改共享服务器或中间件。
