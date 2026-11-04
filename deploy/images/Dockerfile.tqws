@@ -1,0 +1,5 @@
+FROM tracequest-web:event-control-20261104
+USER 0
+COPY index.js /usr/share/nginx/html/assets/index-CzK5Oaxk.js
+RUN chown root:root /usr/share/nginx/html/assets/index-CzK5Oaxk.js && chmod 0644 /usr/share/nginx/html/assets/index-CzK5Oaxk.js
+USER 101

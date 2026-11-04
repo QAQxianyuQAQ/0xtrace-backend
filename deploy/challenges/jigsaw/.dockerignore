@@ -1,0 +1,11 @@
+# 镜像里只需要 app/ 与 data/，其余都是出题机上的东西
+tools/
+test_local.py
+build_push.ps1
+docker-compose.yml
+README.md
+题面.md
+challenge.yaml
+__pycache__/
+*.pyc
+*.md

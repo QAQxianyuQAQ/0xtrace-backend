@@ -1,0 +1,13 @@
+{
+  "name": "nibble-snake-ctf",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A two-stage snake CTF: request replay and JavaScript prototype pollution",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check server.mjs && node --check lib/level-two.js && node --check public/app.js"
+  }
+}

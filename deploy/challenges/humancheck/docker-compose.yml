@@ -1,0 +1,22 @@
+services:
+  challenge:
+    build: .
+    image: sacc-humancheck:deploy
+    container_name: sacc-humancheck
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # 平台注入真实 FLAG，必须匹配 SACC{...}
+      FLAG: "${FLAG:?请先设置 FLAG，例如 SACC{...}}"
+      HOST: "0.0.0.0"
+      PORT: "8080"
+      TTL_SECONDS: "7200"
+      RATE_MAX: "40"
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: "no"
+    stop_grace_period: 5s

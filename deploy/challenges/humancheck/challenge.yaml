@@ -1,0 +1,32 @@
+metadata:
+  name: 人机验证
+  category: web-interaction
+  difficulty: medium-hard
+  target_solve_minutes: [10, 25]
+  human_blind_test: false
+  language: zh-CN
+
+deployment:
+  image: "<平台填写：上传 deploy 目录构建出的镜像>"
+  container_port: 8080
+  lifetime_seconds: 7200
+  read_only: true
+  drop_all_capabilities: true
+  no_new_privileges: true
+  env:
+    FLAG: "<平台动态注入，格式 SACC{...}>"
+    HOST: "0.0.0.0"
+    PORT: "8080"
+    TTL_SECONDS: "7200"
+  healthcheck:
+    path: /api/health
+    expect: '{"ok":true'
+
+verification:
+  submitted_value_pattern: '^SACC\{[^{}\r\n]{1,240}\}$'
+  match: exact
+
+notes: |
+  每局答案由服务端随机生成（验证码 / 隐藏身份 / 崩溃错误码），静态网页源码中不存在。
+  前端界面与脚本整体打包为 base64 并在运行时注入；base64 只是降噪，不是加密。
+  凭据只在走完五步进度后由 /api/claim 返回，且 /api/progress 同时校验顺序与答案。

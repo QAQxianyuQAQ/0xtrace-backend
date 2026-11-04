@@ -1,0 +1,2712 @@
+{
+  "1": [
+    [
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 1,
+        "y": 0,
+        "rotation": 2,
+        "flipped": true
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 1,
+        "y": 3,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 2,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 3,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 5,
+        "y": 2,
+        "rotation": 3,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 1,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 1,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 1,
+        "y": 2,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 3,
+        "y": 2,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 4,
+        "y": 3,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 5,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      }
+    ],
+    [
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 1,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 1,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 2,
+        "y": 2,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 4,
+        "y": 3,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 5,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 1,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 1,
+        "y": 1,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 1,
+        "y": 3,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 3,
+        "y": 2,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 5,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 1,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 1,
+        "y": 3,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 1,
+        "y": 1,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 4,
+        "y": 2,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 6,
+        "y": 1,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 5,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      }
+    ],
+    [
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 1,
+        "y": 0,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 1,
+        "y": 1,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 1,
+        "y": 3,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 5,
+        "y": 0,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 4,
+        "y": 3,
+        "rotation": 1,
+        "flipped": true
+      }
+    ],
+    [
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 1,
+        "y": 0,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 1,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 1,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 3,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 6,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 5,
+        "y": 3,
+        "rotation": 3,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 1,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 1,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 1,
+        "y": 3,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 5,
+        "y": 3,
+        "rotation": 3,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 6,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 5,
+        "y": 3,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 3,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 1,
+        "y": 2,
+        "rotation": 1,
+        "flipped": true
+      }
+    ],
+    [
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 5,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 4,
+        "y": 3,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 3,
+        "y": 1,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 1,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 5,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 4,
+        "y": 3,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 3,
+        "y": 1,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 1,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 5,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 4,
+        "y": 3,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 2,
+        "flipped": true
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 3,
+        "y": 1,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 1,
+        "y": 2,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 5,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 4,
+        "y": 3,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 3,
+        "y": 1,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 1,
+        "y": 2,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 6,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 5,
+        "y": 2,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 2,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 3,
+        "y": 2,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 0,
+        "flipped": true
+      }
+    ],
+    [
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 2,
+        "flipped": true
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 1,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 2,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 4,
+        "y": 1,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 4,
+        "y": 2,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 5,
+        "y": 2,
+        "rotation": 3,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 2,
+        "flipped": true
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 1,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 2,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 7,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 4,
+        "y": 1,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 4,
+        "y": 2,
+        "rotation": 3,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 4,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 2,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 6,
+        "y": 1,
+        "rotation": 2,
+        "flipped": true
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 4,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 5,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 2,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 3,
+        "y": 4,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 4,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 3,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 2,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 3,
+        "y": 4,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 4,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 3,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 7,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 0,
+        "y": 2,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 2,
+        "y": 2,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 3,
+        "y": 3,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 4,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      }
+    ],
+    [
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 2,
+        "flipped": true
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 4,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 2,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 1,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 5,
+        "y": 2,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 3,
+        "y": 1,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 0,
+        "flipped": true
+      }
+    ],
+    [
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 2,
+        "flipped": true
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 4,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 2,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 1,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 5,
+        "y": 2,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 3,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 2,
+        "y": 1,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 4,
+        "y": 3,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 4,
+        "y": 1,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 2,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 2,
+        "y": 1,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 4,
+        "y": 3,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 4,
+        "y": 1,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 2,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 1,
+        "y": 2,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 3,
+        "y": 4,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 2,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 4,
+        "y": 2,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 5,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 1,
+        "y": 2,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 3,
+        "y": 3,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 2,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 7,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 4,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 2,
+        "y": 2,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 7,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 4,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 4,
+        "y": 1,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 1,
+        "y": 2,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 2,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 3,
+        "y": 4,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 3,
+        "y": 1,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 6,
+        "y": 1,
+        "rotation": 2,
+        "flipped": true
+      }
+    ],
+    [
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 4,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 2,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 1,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 4,
+        "y": 2,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 6,
+        "y": 1,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 5,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      }
+    ],
+    [
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 2,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 4,
+        "y": 2,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 4,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 6,
+        "y": 2,
+        "rotation": 0,
+        "flipped": true
+      }
+    ],
+    [
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 7,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 2,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 3,
+        "y": 2,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      }
+    ],
+    [
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 2,
+        "y": 1,
+        "rotation": 2,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 4,
+        "y": 2,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 4,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 6,
+        "y": 2,
+        "rotation": 0,
+        "flipped": true
+      }
+    ],
+    [
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 0,
+        "y": 2,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 1,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 2,
+        "y": 2,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 4,
+        "y": 3,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 3,
+        "y": 1,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 6,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 2,
+        "y": 0,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 7,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 4,
+        "y": 1,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 3,
+        "y": 3,
+        "rotation": 1,
+        "flipped": true
+      }
+    ],
+    [
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 2,
+        "y": 1,
+        "rotation": 0,
+        "flipped": true
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 3,
+        "y": 4,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 4,
+        "y": 2,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 6,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 4,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 1,
+        "y": 1,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 3,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 5,
+        "y": 3,
+        "rotation": 1,
+        "flipped": true
+      }
+    ],
+    [
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 0,
+        "y": 4,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 1,
+        "y": 1,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 3,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 3,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 5,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 5,
+        "y": 3,
+        "rotation": 3,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 7,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 2,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 5,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 4,
+        "y": 3,
+        "rotation": 3,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 3,
+        "y": 4,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 2,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 4,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 4,
+        "y": 2,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 6,
+        "y": 0,
+        "rotation": 2,
+        "flipped": false
+      }
+    ],
+    [
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 3,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 7,
+        "y": 0,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 2,
+        "y": 0,
+        "rotation": 3,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 3,
+        "y": 0,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 4,
+        "y": 1,
+        "rotation": 1,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 4,
+        "y": 3,
+        "rotation": 3,
+        "flipped": false
+      }
+    ]
+  ],
+  "2": [
+    [
+      {
+        "id": "T",
+        "zone": "target",
+        "x": 5,
+        "y": 3,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "P",
+        "zone": "target",
+        "x": 8,
+        "y": 2,
+        "rotation": 2,
+        "flipped": false
+      },
+      {
+        "id": "I",
+        "zone": "target",
+        "x": 4,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "Y",
+        "zone": "target",
+        "x": 0,
+        "y": 0,
+        "rotation": 1,
+        "flipped": true
+      },
+      {
+        "id": "F",
+        "zone": "target",
+        "x": 2,
+        "y": 1,
+        "rotation": 2,
+        "flipped": true
+      },
+      {
+        "id": "Z",
+        "zone": "target",
+        "x": 0,
+        "y": 1,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "V",
+        "zone": "target",
+        "x": 0,
+        "y": 2,
+        "rotation": 0,
+        "flipped": false
+      },
+      {
+        "id": "L",
+        "zone": "target",
+        "x": 0,
+        "y": 4,
+        "rotation": 3,
+        "flipped": false
+      }
+    ]
+  ]
+}

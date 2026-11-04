@@ -1,0 +1,9 @@
+.git
+dist
+docs
+deploy
+*.zip
+*.tar
+*.tar.gz
+README.md
+build.ps1

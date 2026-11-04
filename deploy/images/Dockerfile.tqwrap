@@ -1,0 +1,5 @@
+FROM tracequest-backend:history-20261104
+USER 0
+COPY docker-tq-wrapper.sh /usr/local/bin/docker
+RUN chmod 0755 /usr/local/bin/docker
+USER 10001

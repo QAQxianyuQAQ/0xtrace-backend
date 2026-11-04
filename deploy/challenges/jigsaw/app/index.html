@@ -1,0 +1,1425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>异形数独拼图 · 9×9</title>
+<style>
+:root{
+  --ink:#0f172a; --muted:#64748b; --line:#e4e9f0; --card:#fff;
+  --accent:#2563eb; --ok:#059669; --err:#e11d48; --warn:#d97706;
+  --ease:cubic-bezier(.22,.61,.36,1); --spring:cubic-bezier(.34,1.56,.64,1);
+  --shadow:0 1px 2px rgba(15,23,42,.05), 0 10px 28px -18px rgba(15,23,42,.35);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+body{
+  margin:0; padding:18px 18px 44px; color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  background-color:#f3f6fb;
+  background-image:
+    linear-gradient(rgba(15,23,42,.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15,23,42,.022) 1px, transparent 1px),
+    radial-gradient(1100px 500px at 12% -8%, #dbeafe 0%, transparent 60%),
+    radial-gradient(900px 460px at 92% 0%, #ede9fe 0%, transparent 58%);
+  background-size:26px 26px, 26px 26px, auto, auto;
+  min-height:100vh;
+}
+h1{font-size:18px;margin:0 0 6px;letter-spacing:.2px;display:flex;align-items:center;gap:8px;}
+h1 .dim{font-size:12px;font-weight:600;color:#fff;background:var(--ink);
+        padding:2px 8px;border-radius:999px;letter-spacing:.5px;}
+.sub{font-size:12.5px;color:#475569;line-height:1.65;margin:0 0 8px;max-width:760px;}
+.sub b{color:var(--ink);}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;}
+.chip{font-size:11.5px;color:#334155;background:#fff;border:1px solid var(--line);
+      border-radius:999px;padding:3px 10px;box-shadow:0 1px 2px rgba(15,23,42,.04);}
+.wrap{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start;}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:16px;
+       padding:14px;box-shadow:var(--shadow);}
+.panel h2{font-size:13px;margin:0 0 10px;color:#334155;font-weight:650;
+          display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.prog{font-variant-numeric:tabular-nums;font-size:11.5px;color:var(--muted);
+      background:#f1f5f9;border-radius:999px;padding:2px 9px;}
+.bar{height:4px;border-radius:99px;background:#eef2f7;overflow:hidden;margin:-4px 0 10px;}
+.bar i{display:block;height:100%;width:0;border-radius:99px;
+       background:linear-gradient(90deg,#60a5fa,#2563eb);
+       transition:width .45s var(--ease);}
+
+/* ---------------- 碎片托盘 ---------------- */
+#tray{display:flex;flex-wrap:wrap;gap:12px;width:330px;align-content:flex-start;min-height:96px;}
+.pcard{position:relative;border:1px dashed #cbd5e1;border-radius:12px;padding:12px 12px 10px;
+       background:#fbfdff;touch-action:none;user-select:none;cursor:grab;
+       transition:transform .18s var(--spring), box-shadow .18s var(--ease),
+                  border-color .18s var(--ease), background .18s var(--ease);
+       animation:cardIn .32s var(--spring) backwards;}
+.pcard:hover{transform:translateY(-3px);border-color:#93c5fd;box-shadow:0 10px 20px -14px rgba(37,99,235,.6);}
+.pcard:active{cursor:grabbing;transform:translateY(-1px) scale(.985);}
+.pcard.sel{border-color:var(--accent);border-style:solid;background:#eff6ff;
+           box-shadow:0 0 0 4px rgba(37,99,235,.14), 0 12px 24px -16px rgba(37,99,235,.8);
+           animation:selPulse 1.6s var(--ease) infinite;}
+.pcard .no{position:absolute;top:4px;left:7px;font-size:10.5px;color:#94a3b8;
+           font-variant-numeric:tabular-nums;font-weight:600;}
+.pgrid{position:relative;}
+.pcell{position:absolute;border:1px solid rgba(15,23,42,.2);display:flex;
+       align-items:center;justify-content:center;font-weight:700;color:#0f172a;
+       border-radius:2px;transition:background .2s;}
+@keyframes cardIn{from{opacity:0;transform:translateY(10px) scale(.94);}to{opacity:1;transform:none;}}
+@keyframes selPulse{0%,100%{box-shadow:0 0 0 4px rgba(37,99,235,.14),0 12px 24px -16px rgba(37,99,235,.8);}
+                    50%{box-shadow:0 0 0 7px rgba(37,99,235,.07),0 12px 24px -16px rgba(37,99,235,.8);}}
+
+/* ---------------- 棋盘 ---------------- */
+.boardbox{position:relative;display:inline-block;}
+/* content-box：边框画在格子区域之外，四边都不会被格子盖住 */
+#board{position:relative;box-sizing:content-box;background:#fff;border:3px solid var(--ink);border-radius:8px;
+       box-shadow:0 18px 40px -28px rgba(15,23,42,.55);
+       transition:box-shadow .25s var(--ease), border-color .25s var(--ease);}
+#board.win{border-color:var(--ok);box-shadow:0 0 0 4px rgba(5,150,105,.16),0 18px 40px -24px rgba(5,150,105,.5);}
+/* 网格细线与碎片分界线统一由一块 SVG 画：线宽完全一致，方头补齐拐角 */
+#edges{position:absolute;left:0;top:0;display:block;pointer-events:none;z-index:4;}
+#edges .gl{stroke:#dfe6ef;stroke-width:1;}
+#edges .rg{stroke:var(--ink);stroke-width:var(--ew,3px);stroke-linecap:square;}
+#board.win #edges .rg{stroke:var(--ok);}
+#edges .new{animation:edgeIn .32s var(--ease);}
+@keyframes edgeIn{from{opacity:0;}to{opacity:1;}}
+.cell{position:absolute;display:flex;align-items:center;justify-content:center;
+      font-weight:600;color:var(--ink);background:#fff;
+      transition:background .22s var(--ease), color .22s var(--ease), transform .16s var(--spring);}
+.cell.hoverable{cursor:pointer;touch-action:none;user-select:none;}
+.cell.given{font-weight:800;}
+.cell.user .val{color:#1d4ed8;}
+.cell.bad{background:#fee2e2 !important;color:#b91c1c;}
+.cell.bad .val{color:#b91c1c;}
+.cell.pick{background:#dbeafe !important;box-shadow:inset 0 0 0 2.5px var(--accent);z-index:3;}
+.cell.peer{background:#f5f8ff;}
+.cell.same .val{color:var(--accent);}
+.cell.same{background:#e8f0ff !important;}
+.cell.pv-ok{background:#d1fae5 !important;box-shadow:inset 0 0 0 2px #10b981;z-index:2;}
+.cell.pv-bad{background:#ffe4e6 !important;box-shadow:inset 0 0 0 2px #fb7185;z-index:2;}
+.cell .val{display:block;line-height:1;animation:digitIn .26s var(--spring);}
+.cell.hinted .val{animation:hintFlash .9s var(--ease);}
+.cell.pop{animation:cellPop .34s var(--spring);}
+.cell.shake{animation:shake .4s var(--ease);}
+@keyframes digitIn{from{transform:scale(.4);opacity:.2;}to{transform:scale(1);opacity:1;}}
+@keyframes cellPop{0%{transform:scale(.55);opacity:.3;}60%{transform:scale(1.07);}100%{transform:scale(1);opacity:1;}}
+@keyframes shake{10%,90%{transform:translateX(-2px);}20%,80%{transform:translateX(3px);}
+                 30%,50%,70%{transform:translateX(-5px);}40%,60%{transform:translateX(5px);}}
+@keyframes hintFlash{0%,100%{box-shadow:none;}35%{filter:drop-shadow(0 0 10px #f59e0b);transform:scale(1.25);}}
+.notes{position:absolute;inset:2px;display:grid;grid-template-columns:repeat(3,1fr);
+       grid-template-rows:repeat(3,1fr);color:#64748b;font-weight:600;pointer-events:none;}
+.notes span{display:flex;align-items:center;justify-content:center;
+            animation:noteIn .18s var(--ease);}
+@keyframes noteIn{from{opacity:0;transform:scale(.5);}to{opacity:1;transform:scale(1);}}
+
+/* ---------------- 拖拽幽灵 ---------------- */
+#ghost{pointer-events:none;z-index:999;filter:drop-shadow(0 12px 16px rgba(15,23,42,.28));
+       opacity:.94;}
+#ghost.settled{transition:left .2s var(--ease), top .2s var(--ease), opacity .2s var(--ease);}
+.spark{position:absolute;width:8px;height:8px;border-radius:50%;pointer-events:none;
+       left:50%;top:50%;z-index:5;animation:spark .95s var(--ease) forwards;}
+@keyframes spark{0%{transform:translate(-50%,-50%) scale(.4);opacity:1;}
+                 100%{transform:translate(calc(-50% + var(--tx)),calc(-50% + var(--ty))) scale(0);opacity:0;}}
+
+/* ---------------- 控件 ---------------- */
+#pad{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 10px;max-width:496px;}
+#pad button{width:calc((100% - 64px)/9);min-width:42px;height:46px;border-radius:11px;
+  border:1px solid var(--line);background:#fff;font-size:17px;font-weight:650;color:var(--ink);
+  cursor:pointer;font-family:inherit;font-variant-numeric:tabular-nums;
+  transition:transform .14s var(--spring),background .16s,border-color .16s,box-shadow .16s;}
+#pad button:hover{background:#f8fafc;border-color:#cbd5e1;transform:translateY(-2px);
+                  box-shadow:0 8px 16px -12px rgba(15,23,42,.6);}
+#pad button:active{transform:translateY(0) scale(.94);}
+#pad button[data-d="0"]{width:auto;min-width:70px;padding:0 14px;font-size:13.5px;
+  font-weight:650;color:#475569;}
+.tools{display:flex;flex-wrap:wrap;gap:8px;max-width:496px;}
+.tbtn{border:1px solid var(--line);background:#fff;color:#1e293b;border-radius:10px;
+      padding:9px 13px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;
+      transition:transform .14s var(--spring),background .16s,border-color .16s,box-shadow .16s,color .16s;}
+.tbtn:hover{transform:translateY(-2px);border-color:#cbd5e1;box-shadow:0 8px 16px -12px rgba(15,23,42,.6);}
+.tbtn:active{transform:translateY(0) scale(.96);}
+.tbtn.primary{background:var(--ink);color:#fff;border-color:var(--ink);}
+.tbtn.on{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;
+         box-shadow:inset 0 0 0 1px #bfdbfe;}
+.tbtn.warn{color:#b45309;}
+.tbtn[disabled]{opacity:.42;cursor:not-allowed;transform:none;box-shadow:none;}
+#ctx{display:none;align-items:center;gap:9px;margin-top:10px;max-width:496px;
+     background:#f8fafc;border:1px dashed #cbd5e1;border-radius:11px;padding:8px 11px;
+     font-size:12.5px;color:#334155;animation:cardIn .24s var(--ease);}
+#ctx.show{display:flex;}
+#ctx button{border:none;background:var(--accent);color:#fff;border-radius:8px;
+            padding:6px 11px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;
+            transition:transform .14s var(--spring),filter .16s;}
+#ctx button:hover{transform:translateY(-1px);filter:brightness(1.08);}
+#msg{margin-top:11px;max-width:496px;font-size:13px;font-weight:600;min-height:20px;
+     padding:8px 12px;border-radius:10px;background:#f1f5f9;color:#475569;
+     transition:background .25s var(--ease),color .25s var(--ease),transform .25s var(--spring);}
+#msg.ok{background:#ecfdf5;color:var(--ok);}
+#msg.err{background:#fff1f2;color:var(--err);}
+#msg.info{background:#f1f5f9;color:#475569;}
+#msg.pop{animation:msgPop .34s var(--spring);}
+@keyframes msgPop{0%{transform:translateY(4px) scale(.98);opacity:.5;}100%{transform:none;opacity:1;}}
+.win-note{font-size:12px;color:var(--ok);font-weight:700;}
+
+/* ---------------- 状态条 / 输入模式 / 数字键盘增强 ---------------- */
+.statusbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;max-width:496px;margin:0 0 12px;
+  font-size:12.5px;color:#475569;font-variant-numeric:tabular-nums;}
+.statusbar .pill{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);
+  border-radius:999px;padding:5px 11px;transition:border-color .16s,background .16s,opacity .16s,transform .14s var(--spring);}
+.statusbar .pill b{color:#0f172a;font-weight:700;font-variant-numeric:tabular-nums;}
+.statusbar .pill.clickable{cursor:pointer;}
+.statusbar .pill.clickable:hover{border-color:#cbd5e1;transform:translateY(-1px);}
+.statusbar .pill.off{opacity:.5;}
+.statusbar .pill.ticking{background:#eff6ff;border-color:#bfdbfe;}
+.statusbar .pill.ticking b{color:#1d4ed8;}
+.statusbar .pill.paused{background:#fff7ed;border-color:#fed7aa;}
+.statusbar .pill.paused b{color:#b45309;}
+
+.modes{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin:0 0 10px;max-width:496px;}
+.mbtn{border:1px solid var(--line);background:#fff;color:#334155;border-radius:9px;
+  padding:7px 12px;font-size:12.5px;font-weight:650;cursor:pointer;font-family:inherit;
+  display:inline-flex;align-items:center;gap:5px;
+  transition:transform .14s var(--spring),background .16s,border-color .16s,color .16s,box-shadow .16s;}
+.mbtn:hover{transform:translateY(-2px);border-color:#cbd5e1;box-shadow:0 8px 16px -12px rgba(15,23,42,.6);}
+.mbtn:active{transform:translateY(0) scale(.95);}
+.mbtn.on{background:var(--ink);color:#fff;border-color:var(--ink);}
+.mbtn .k{font-size:9.5px;font-weight:700;opacity:.55;border:1px solid currentColor;border-radius:4px;
+  padding:0 3px;line-height:1.35;}
+#armedinfo{font-size:12px;color:#1d4ed8;background:#eff6ff;border:1px solid #bfdbfe;border-radius:999px;
+  padding:5px 11px;animation:cardIn .2s var(--ease);}
+#armedinfo:empty{display:none;}
+
+#pad button{position:relative;}
+#pad button .cnt{position:absolute;right:5px;bottom:2px;font-size:9.5px;font-weight:700;color:#94a3b8;
+  font-variant-numeric:tabular-nums;line-height:1;}
+#pad button.done{color:#94a3b8;background:#f8fafc;}
+#pad button.done .cnt{color:#10b981;}
+#pad button.armed{background:var(--ink);color:#fff;border-color:var(--ink);
+  box-shadow:0 0 0 3px rgba(37,99,235,.16);transform:translateY(-2px);}
+#pad button.armed .cnt{color:#c7d2fe;}
+
+.cell .notes span.hi{color:#1d4ed8;background:#dbeafe;border-radius:4px;
+  box-shadow:inset 0 0 0 1px #93c5fd;animation:noteIn .18s var(--ease);}
+.cell.cand{box-shadow:inset 0 0 0 2px #bfdbfe;}
+.cell.given.cand{box-shadow:inset 0 0 0 2px #93c5fd;}
+
+.boardbox{position:relative;}
+.boardbox.paused #board{filter:blur(7px) grayscale(.4);pointer-events:none;}
+.pauseveil{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  z-index:6;font-weight:800;font-size:15px;letter-spacing:.4px;color:#0f172a;
+  background:rgba(248,250,252,.34);border-radius:14px;text-shadow:0 1px 0 #fff;}
+.boardbox.paused .pauseveil{display:flex;animation:cardIn .2s var(--ease);}
+
+/* 容器题：通关后显示的 flag 面板（离线单机版永远不显示） */
+#flagbox{display:none;margin-top:12px;padding:14px 16px;border-radius:14px;
+  background:linear-gradient(180deg,#ecfdf5,#f0fdf4);border:1px solid #6ee7b7;
+  box-shadow:0 6px 20px rgba(16,185,129,.14);animation:cardIn .3s var(--ease);}
+#flagbox .ftitle{font-size:13px;font-weight:800;color:#065f46;letter-spacing:.5px;}
+#flagbox .frow{display:flex;align-items:center;gap:10px;margin:9px 0 7px;flex-wrap:wrap;}
+#flagbox code{flex:1 1 240px;font:700 16px/1.5 ui-monospace,Consolas,monospace;
+  padding:9px 12px;border-radius:9px;background:#fff;border:1px dashed #34d399;
+  color:#064e3b;word-break:break-all;user-select:all;}
+#flagbox .fhint{font-size:12px;color:#047857;}
+
+/* ---------------- 页面美化层（出题人留言 / 纸感 / 细节） ---------------- */
+:root{ --serif:"Songti SC","STSong","Noto Serif SC","SimSun",Georgia,serif; }
+
+/* 出题人留言：放在题目上方，劝一句"别用 AI" */
+.creed{position:relative;max-width:892px;margin:0 0 18px;padding:16px 22px 16px 18px;
+  border-radius:16px;border:1px solid #f1ddbd;
+  background:linear-gradient(135deg,#fffdf8 0%,#fff8ec 54%,#fef3f2 100%);
+  box-shadow:0 14px 34px -28px rgba(146,84,20,.65), inset 0 1px 0 #fff;
+  display:flex;align-items:center;gap:15px;}
+.creed .q{font:700 44px/1 var(--serif);color:#e2c193;flex:none;transform:translateY(5px);}
+.creed .txt{margin:0;min-width:0;}
+.creed .l1{font:700 16.5px/1.55 var(--serif);color:#5b3a17;letter-spacing:.7px;}
+.creed .l2{margin-top:5px;font-size:12.5px;color:#936c40;letter-spacing:.2px;line-height:1.6;}
+.creed .stamp{position:absolute;right:16px;top:-10px;font-size:10.5px;font-weight:700;
+  letter-spacing:1.2px;color:#a16207;background:#fff;border:1px solid #f0d9b5;
+  border-radius:999px;padding:2px 9px;box-shadow:0 4px 10px -8px rgba(146,84,20,.9);}
+
+/* 标题与副标题 */
+h1{font-size:19px;font-weight:700;letter-spacing:.4px;}
+h1 .dim{background:linear-gradient(135deg,#0f172a,#334155);letter-spacing:.8px;}
+.sub{color:#475569;line-height:1.7;}
+
+/* 面板：更轻的描边 + 顶部高光 */
+.panel{border-radius:18px;border-color:#e6ecf4;
+  box-shadow:0 1px 2px rgba(15,23,42,.04), 0 18px 40px -30px rgba(15,23,42,.5),
+             inset 0 1px 0 #fff;}
+.panel h2{font-size:12.5px;letter-spacing:.7px;color:#475569;padding-left:11px;position:relative;}
+.panel h2::before{content:"";position:absolute;left:0;top:1px;bottom:1px;width:3px;
+  border-radius:99px;background:linear-gradient(180deg,#60a5fa,#2563eb);}
+section.panel:nth-of-type(2) h2::before{background:linear-gradient(180deg,#34d399,#059669);}
+
+/* 棋盘：一点"纸"的观感 */
+#board{background:linear-gradient(180deg,#fff,#fcfdff);
+  box-shadow:0 0 0 1px rgba(15,23,42,.05), 0 24px 48px -34px rgba(15,23,42,.7);}
+#board.win{box-shadow:0 0 0 1px rgba(5,150,105,.2), 0 0 0 5px rgba(5,150,105,.12),
+  0 24px 48px -30px rgba(5,150,105,.55);}
+
+/* 工具条 */
+.tools{gap:7px;}
+
+/* 空棋盘上的一句淡引导 */
+.boardhint{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
+  text-align:center;font-size:13px;letter-spacing:2.2px;color:#c9d4e2;
+  pointer-events:none;z-index:1;transition:opacity .35s var(--ease);}
+.boardbox.haspieces .boardhint{opacity:0;}
+#pad button{height:48px;border-radius:12px;background:#fff;}
+#pad button:hover{background:#fff;border-color:#93c5fd;}
+
+/* 页脚 */
+.foot{max-width:892px;margin:24px 0 0;font-size:11.5px;color:#94a3b8;letter-spacing:.45px;
+  display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+.foot i{width:4px;height:4px;border-radius:99px;background:#cbd5e1;display:inline-block;}
+
+@media (max-width:820px){
+  .creed{padding:13px 16px;gap:10px;}
+  .creed .q{display:none;}
+  .creed .l1{font-size:15px;}
+  .creed .l2{font-size:12px;}
+  .creed .stamp{right:12px;}
+}
+
+@media (max-width:820px){
+  #tray{width:100%;}
+  .panel{width:100%;}
+}
+@media (prefers-reduced-motion: reduce){
+  *{animation-duration:.001s !important;transition-duration:.001s !important;animation-delay:0s !important;}
+}
+</style>
+</head>
+<body>
+
+<div class="creed">
+  <div class="q">“</div>
+  <div class="txt">
+    <div class="l1">AI 能秒杀这道题，但那又有什么意义呢。</div>
+    <div class="l2">它替不了你亲手拼出它的那一下 —— 那种「啊，原来是这样」的瞬间，才是这道题真正想留给你的。</div>
+  </div>
+  <div class="stamp">出题人留言</div>
+</div>
+
+<h1>异形数独拼图 <span class="dim">9 × 9</span></h1>
+<p class="sub">把 <b>9 块不规则碎片</b>拼成一个 <b>9×9 正方形</b>，再当成异形数独来解：
+<b>每行、每列、每块碎片</b>内 1–9 各出现一次。数字必须保持正立 —— 所以碎片<b>不许旋转</b>。</p>
+<div class="chips">
+  <span class="chip">拖动画块到棋盘（会自动吸附）</span>
+  <span class="chip">点一块 → 再点棋盘格子（有落点预览）</span>
+  <span class="chip">已放好的块：拖走 / 双击 / 选中后点「取回」</span>
+  <span class="chip">数字优先：点数字 → 连续点格子填（Esc 取消）</span>
+  <span class="chip">Shift+数字 = 小候选 · 双击数字键 = 强制大数 · V/N/E 换模式 · Space 轮换 · H 隐藏候选 · P 暂停</span>
+</div>
+
+<div class="wrap">
+  <section class="panel">
+    <h2>碎片 <span class="prog" id="prog">0 / 9</span></h2>
+    <div class="bar"><i id="progbar"></i></div>
+    <div id="tray"></div>
+  </section>
+
+  <section class="panel">
+    <h2>棋盘 <span class="prog" id="mode">模式：填数</span></h2>
+    <div class="statusbar">
+      <span class="pill clickable" id="clock" title="点击暂停 / 继续（P）">⏱ <b>00:00</b></span>
+      <span class="pill" id="fillinfo">填数 <b>0</b>/81</span>
+      <span class="pill clickable" id="checkmode" title="即时判错开关">⚠ 判错：开</span>
+      <span class="pill clickable" id="cleancand" title="填大数时，自动把这个数字从同行/同列/同碎片的候选里清掉">🧼 自动清候选：开</span>
+      <span class="pill clickable" id="undobtn" title="撤销 Ctrl+Z">↶ 撤销</span>
+      <span class="pill clickable" id="redobtn" title="重做 Ctrl+Y">↷ 重做</span>
+    </div>
+    <div class="boardbox">
+      <div id="board"><svg id="edges" xmlns="http://www.w3.org/2000/svg"></svg></div>
+      <div class="pauseveil">⏸ 已暂停 —— 点上方计时器继续</div>
+      <div class="boardhint">把 9 块碎片拼回一个 9×9 正方形</div>
+    </div>
+    <div id="pad"></div>
+    <div class="modes">
+      <button class="mbtn" data-mode="value">🖊 大数 <span class="k">V</span></button>
+      <button class="mbtn" data-mode="note">✎ 候选 <span class="k">N</span></button>
+      <button class="mbtn" data-mode="erase">🧽 划候选 <span class="k">E</span></button>
+      <span id="armedinfo"></span>
+    </div>
+    <div class="tools">
+      <button id="autocand" class="tbtn">✨ 自动候选</button>
+      <button id="hidenotes" class="tbtn">👁 隐藏候选</button>
+      <button id="clearnotes" class="tbtn">🧹 清空标记</button>
+      <button id="hint"  class="tbtn">💡 提示一格</button>
+      <button id="check" class="tbtn primary">✓ 检查</button>
+      <button id="rejig" class="tbtn" title="把已拼好的碎片全部收回托盘">↩ 收回碎片</button>
+      <button id="reset" class="tbtn">重置</button>
+    </div>
+    <div id="ctx"></div>
+    <div id="msg" class="info">拖一块碎片到棋盘开始吧</div>
+    <div id="flagbox">
+      <div class="ftitle">🚩 通关凭证 · FLAG</div>
+      <div class="frow"><code id="flagtext"></code><button id="copyflag" class="tbtn">复制</button></div>
+      <div class="fhint">把上面的 FLAG 提交到平台答题页的 flag 输入框即可得分。</div>
+    </div>
+  </section>
+</div>
+
+<div class="foot"><span>拼图 × 数独</span><i></i><span>异形数独拼图 9×9</span><i></i><span>慢慢来，想明白才算数</span></div>
+
+<script>
+const DATA = {"N":9,"pieces":[{"cells":[[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[3,0],[3,1],[4,0]],"digits":{"3,1":5,"2,0":7}},{"cells":[[0,0],[1,0],[2,0],[2,1],[2,2],[3,0],[3,1],[3,2],[4,0]],"digits":{"0,0":1,"1,0":5}},{"cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,3],[1,4],[2,3],[2,4]],"digits":{"2,3":8}},{"cells":[[0,3],[1,2],[1,3],[2,2],[2,3],[3,0],[3,1],[3,2],[3,3]],"digits":{"3,2":9,"1,3":8,"1,2":4,"3,1":6}},{"cells":[[0,1],[0,2],[1,0],[1,1],[1,2],[2,1],[2,2],[3,1],[3,2]],"digits":{"1,2":4,"2,2":5}},{"cells":[[0,0],[0,1],[1,0],[1,1],[2,0],[2,1],[3,1],[4,0],[4,1]],"digits":{"3,1":1,"2,1":7}},{"cells":[[0,0],[0,1],[0,2],[0,3],[1,2],[2,2],[2,3],[3,2],[4,2]],"digits":{"0,0":2}},{"cells":[[0,0],[0,1],[0,2],[1,1],[1,2],[2,0],[2,1],[2,2],[2,3]],"digits":{"2,3":3,"0,0":6,"1,2":7}},{"cells":[[0,0],[1,0],[1,1],[1,2],[1,3],[2,2],[2,3],[3,2],[4,2]],"digits":{"0,0":2,"2,3":4}}],"submit":true};
+
+/* ==================== 数据与状态 ==================== */
+/* 离线单机版带 solution/regions；容器题版只下发 pieces（题面公开数据），答案留在服务端校验 */
+const N = DATA.N, PCS = DATA.pieces, SOL = DATA.solution || null, REG = DATA.regions || null;
+const SUBMIT = !!DATA.submit;          // true = 提交到服务端换取 flag
+const COLORS = ["#dbeafe","#dcfce7","#fef9c3","#fce7f3","#e0e7ff",
+                "#ccfbf1","#ffedd5","#f3e8ff","#fee2e2"];
+let CS = 52, TS = 30;
+
+let placed = {};                 // 碎片序号 -> {dr,dc}
+let user   = {};                 // "r,c" -> 1..9
+let notes  = {};                 // "r,c" -> [1..9]   小标记
+let pickCell = null, pickPiece = null;
+let mode = "value";              // value 大数 | note 候选 | erase 划候选
+let armed = null;                // 已“拿起”的数字（数字优先输入）
+let instantCheck = true;         // 即时判错
+let autoClean = true;            // 填大数时自动清掉同行/列/区域的同一候选（可关）
+let notesHidden = false;         // 只隐藏候选的显示，不改数据
+let autoCandBackup = null;       // 自动候选打开前的标记快照 → 再点一次可取消还原
+let drag = null, ghost = null, lastTap = null;
+let justPlaced = -1, hintKey = null;
+/* 提示次数上限：不然「提示一格」点多了等于直接给答案 */
+let hintMax = 3, hintLeft = 3;
+const hist = [];
+const redoStack = [];
+const RM = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+const DUR = RM ? 1 : 200;
+
+/* ==================== 计时器 ==================== */
+const T = { started:false, stopped:false, paused:false, acc:0, t0:0 };
+function clockMs(){
+  if(T.started && !T.paused && !T.stopped) return T.acc + (Date.now() - T.t0);
+  return T.acc;
+}
+function clockStart(){ if(T.started || T.stopped) return; T.started = true; T.t0 = Date.now(); }
+function clockPause(force){
+  const p = (force===undefined) ? !T.paused : !!force;
+  if(p === T.paused) return;
+  if(p){ T.acc = clockMs(); T.paused = true; }
+  else { if(T.stopped) return; T.paused = false; T.t0 = Date.now(); }
+  const box = document.querySelector(".boardbox");
+  if(box) box.classList.toggle("paused", T.paused);
+  paintClock();
+  setMsg(T.paused ? "已暂停：计时停止 + 棋盘遮住（按 P 或点计时器继续）" : "继续，加油！","info");
+}
+function clockStop(){ T.acc = clockMs(); T.stopped = true; T.paused = false;
+  const box = document.querySelector(".boardbox"); if(box) box.classList.remove("paused"); paintClock(); }
+function clockReset(){ T.started = false; T.stopped = false; T.paused = false; T.acc = 0; T.t0 = 0;
+  const box = document.querySelector(".boardbox"); if(box) box.classList.remove("paused"); paintClock(); }
+function fmtMs(ms){
+  const t = Math.floor(ms/1000), p2 = n=>String(n).padStart(2,"0");
+  const h = Math.floor(t/3600), m = Math.floor(t%3600/60), s = t%60;
+  return (h ? h+":"+p2(m) : p2(m)) + ":" + p2(s);
+}
+function paintClock(){
+  const el = document.getElementById("clock");
+  if(!el) return;
+  el.innerHTML = (T.paused ? "▶ " : "⏱ ") + "<b>" + fmtMs(clockMs()) + "</b>";
+  el.classList.toggle("paused", T.paused);
+  el.classList.toggle("ticking", T.started && !T.paused && !T.stopped);
+}
+setInterval(paintClock, 250);
+
+const board = document.getElementById("board");
+board.addEventListener("mouseleave", ()=>clearPreview());
+const edges = document.getElementById("edges");
+const tray  = document.getElementById("tray");
+const msg   = document.getElementById("msg");
+const ctx   = document.getElementById("ctx");
+const prog  = document.getElementById("prog");
+const progbar = document.getElementById("progbar");
+const modeEl = document.getElementById("mode");
+
+/* 网格原点（棋盘内边，即边框之内）：所有拖拽/幽灵落点都以它为基准 */
+function gridBox(){
+  const r = board.getBoundingClientRect();
+  const x = r.left + board.clientLeft, y = r.top + board.clientTop;
+  return {x, y, r: x + N*CS, b: y + N*CS};
+}
+/* 分界线宽度：与棋盘外框同宽，保证全局一致 */
+function EDGE_W(){ return Math.max(2, Math.round(CS*0.055)); }
+
+/* ==================== 工具 ==================== */
+function bbox(cells){
+  let R=0,C=0; for(const [r,c] of cells){R=Math.max(R,r+1);C=Math.max(C,c+1);}
+  return [R,C];
+}
+function key(r,c){ return r+","+c; }
+function pieceCells(pi,dr,dc){ return PCS[pi].cells.map(([r,c])=>[r+dr,c+dc]); }
+function placedCells(pi){
+  const p = placed[pi]; return p ? pieceCells(+pi,p.dr,p.dc) : [];
+}
+function fits(pi,dr,dc){
+  for(const [r,c] of pieceCells(pi,dr,dc)){
+    if(r<0||c<0||r>=N||c>=N) return false;
+    for(const q in placed){
+      if(+q===pi) continue;
+      const p = placed[q];
+      if(pieceCells(+q,p.dr,p.dc).some(([y,x])=>y===r&&x===c)) return false;
+    }
+  }
+  return true;
+}
+/* 就近吸附：在 ±1 格范围里找最近的合法落点 */
+function snapPos(pi,dr,dc){
+  let best=null, bd=1e9;
+  for(let i=-1;i<=1;i++) for(let j=-1;j<=1;j++){
+    const d = i*i + j*j;
+    if(d >= bd) continue;
+    if(fits(pi, dr+i, dc+j)){ bd = d; best = [dr+i, dc+j]; }
+  }
+  return best ? best : [dr, dc];
+}
+function digitsOf(pi,dr,dc){
+  const out = {};
+  for(const k in PCS[pi].digits){
+    const [r,c] = k.split(",").map(Number);
+    out[key(r+dr,c+dc)] = PCS[pi].digits[k];
+  }
+  return out;
+}
+function givensAll(){
+  const g = {};
+  for(const pi in placed){
+    const p = placed[pi];
+    Object.assign(g, digitsOf(+pi,p.dr,p.dc));
+  }
+  return g;
+}
+/* 某格所属的区域 = 已放下的那一块；还没拼好就返回 -1（不泄露拼图答案） */
+function regionOf(r,c){
+  for(const pi in placed){
+    const p = placed[pi];
+    if(pieceCells(+pi, p.dr, p.dc).some(([y,x])=>y===r&&x===c)) return +pi;
+  }
+  return -1;
+}
+function sameRegion(a,b){
+  if(a[0]===b[0] || a[1]===b[1]) return true;
+  const ra = regionOf(a[0],a[1]), rb = regionOf(b[0],b[1]);
+  return ra >= 0 && ra === rb;
+}
+
+/* ==================== 撤销 ==================== */
+function snapshot(){
+  clockStart();
+  hist.push(JSON.stringify({p:placed, u:user, n:notes}));
+  if(hist.length > 80) hist.shift();
+  redoStack.length = 0;
+}
+function undo(){
+  if(!hist.length){ setMsg("没有可撤销的操作","info"); return; }
+  redoStack.push(JSON.stringify({p:placed, u:user, n:notes}));
+  if(redoStack.length > 80) redoStack.shift();
+  const s = JSON.parse(hist.pop());
+  placed = s.p; user = s.u; notes = s.n;
+  autoCandBackup = null;
+  pickCell = null; pickPiece = null;
+  render(); setMsg("已撤销上一步","info");
+}
+function redo(){
+  if(!redoStack.length){ setMsg("没有可重做的操作","info"); return; }
+  hist.push(JSON.stringify({p:placed, u:user, n:notes}));
+  const s = JSON.parse(redoStack.pop());
+  placed = s.p; user = s.u; notes = s.n;
+  autoCandBackup = null;
+  pickCell = null; pickPiece = null;
+  render(); setMsg("已重做","info");
+}
+function clearHistory(){
+  hist.length = 0; redoStack.length = 0;
+}
+
+/* ==================== 渲染 ==================== */
+let cellEl = {};
+let previewEls = [];
+
+let trayWas = new Set();          // 上一次托盘里已有的块 → 只让“新出现”的卡片播入场动效
+function renderTray(){
+  tray.innerHTML = "";
+  const nowSet = new Set();
+  PCS.forEach((p,pi)=>{
+    if(placed[pi]) return;
+    nowSet.add(pi);
+    const card = document.createElement("div");
+    card.className = "pcard" + (pickPiece===pi ? " sel" : "");
+    card.dataset.pi = pi;
+    if(trayWas.has(pi)) card.style.animation = "none";
+    else card.style.animationDelay = ((nowSet.size-1)*32)+"ms";
+    const [R,C] = bbox(p.cells);
+    const g = document.createElement("div");
+    g.className = "pgrid";
+    g.style.width = C*TS+"px"; g.style.height = R*TS+"px";
+    p.cells.forEach(([r,c])=>{
+      const d = document.createElement("div");
+      d.className = "pcell";
+      d.style.cssText = `left:${c*TS}px;top:${r*TS}px;width:${TS}px;height:${TS}px;`
+                      + `background:${COLORS[pi%9]};font-size:${TS*0.56}px`;
+      const v = p.digits[key(r,c)];
+      if(v) d.textContent = v;
+      g.appendChild(d);
+    });
+    const no = document.createElement("span");
+    no.className = "no"; no.textContent = (pi+1);
+    card.appendChild(no); card.appendChild(g);
+    card.addEventListener("pointerdown", ev=>potentialDrag(ev, pi, "tray"));
+    tray.appendChild(card);
+  });
+  trayWas = nowSet;
+}
+
+function renderBoard(){
+  board.style.width = N*CS+"px";             /* content-box：格子区域正好 N*CS */
+  board.style.height = N*CS+"px";
+  board.style.borderWidth = EDGE_W()+"px";   /* 外框与内部线同宽 */
+  board.innerHTML = "";
+  board.appendChild(edges);                  /* SVG 重新挂回（innerHTML 清空了子节点） */
+  cellEl = {}; previewEls = [];
+
+  const painted = {};                       // "r,c" -> 碎片序号
+  for(const pi in placed){
+    for(const [r,c] of placedCells(+pi)) painted[key(r,c)] = +pi;
+  }
+  const giv = givensAll();
+  const bad = conflicts();
+  const sel = pickCell;
+  const selVal = sel ? (giv[key(sel[0],sel[1])] || user[key(sel[0],sel[1])]) : 0;
+
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++){
+    const k = key(r,c), pi = painted[k];
+    const d = document.createElement("div");
+    d.className = "cell";
+    d.dataset.r = r; d.dataset.c = c;
+    d.style.cssText = `left:${c*CS}px;top:${r*CS}px;width:${CS}px;height:${CS}px;`
+                    + `font-size:${CS*0.52}px;`;
+    if(pi!==undefined){
+      d.style.background = COLORS[pi%9];
+      if(pi===justPlaced) d.classList.add("pop");
+      d.classList.add("hoverable");
+      d.title = "第 "+(pi+1)+" 块 · 拖动可移动，双击可收回";
+      d.addEventListener("pointerdown", ev=>potentialDrag(ev, pi, "board", k));
+      d.addEventListener("dblclick", ()=>takeBack(pi));
+    }
+    d.addEventListener("click", ()=>{
+      if(pickPiece!==null) return placeByClick(pickPiece, r, c);
+      /* 数字优先：全部拼好后，拿着数字点格子 = 直接填 */
+      if(armed!==null && Object.keys(placed).length===9){
+        pickCell = [r,c]; applyAt(r, c, armed); return;
+      }
+      selectCell(r,c);
+    });
+    d.addEventListener("mouseover", ()=>{          // 选中碎片后，悬停预览落点
+      if(pickPiece===null) return;
+      const a = anchorFor(pickPiece, r, c);
+      if(a) showPreview(pickPiece, a[0], a[1], true);
+      else showPreview(pickPiece, r, c, false);
+    });
+    const v = giv[k];
+    if(v){ d.classList.add("given"); d.insertAdjacentHTML("beforeend", `<span class="val">${v}</span>`); }
+    else if(user[k]){
+      d.classList.add("user");
+      d.insertAdjacentHTML("beforeend", `<span class="val">${user[k]}</span>`);
+    } else if(!notesHidden && notes[k] && notes[k].length){
+      const wrap = document.createElement("div");
+      wrap.className = "notes";
+      wrap.style.fontSize = Math.max(8, CS*0.19)+"px";
+      for(let n=1;n<=9;n++){
+        const s = document.createElement("span");
+        const has = notes[k].includes(n);
+        s.textContent = has ? n : "";
+        if(has && armed!==null && n===armed) s.className = "hi";
+        wrap.appendChild(s);
+      }
+      d.appendChild(wrap);
+    }
+    if(instantCheck && bad[k]) d.classList.add("bad");
+    if(sel && sel[0]===r && sel[1]===c) d.classList.add("pick");
+    else if(sel && sameRegion(sel,[r,c]) && !bad[k]) d.classList.add("peer");
+    if(selVal && v===selVal && !(sel[0]===r&&sel[1]===c)) d.classList.add("same");
+    if(armed!==null && v===armed && !(sel && sel[0]===r && sel[1]===c)) d.classList.add("same");
+    if(armed!==null && !v && notes[k] && notes[k].includes(armed)) d.classList.add("cand");
+    if(hintKey===k) d.classList.add("hinted");
+    cellEl[k] = d;
+    board.appendChild(d);
+  }
+  buildEdges(painted);
+  renderTray();
+  renderChrome();
+  justPlaced = -1;
+  hintKey = null;
+}
+
+/* 统一的网格与碎片分界线。
+   每个方向都判一次、同一条边只画一次（用 id 去重），棋盘最外沿用 #board 的边框，
+   因此线宽处处相同；stroke-linecap:square 让拐角自动补齐。
+   注意：必须处理「已放碎片 ↔ 空格」的边——旧版把画线责任交给下/右那格，
+   而空格不在 painted 循环里，导致碎片的下边与右边漏线。 */
+function buildEdges(painted){
+  const W = N*CS, ew = EDGE_W();
+  let gl = "";
+  for(let i=1;i<N;i++){
+    gl += `<line class="gl" x1="${i*CS}" y1="0" x2="${i*CS}" y2="${W}"/>`
+        + `<line class="gl" x1="0" y1="${i*CS}" x2="${W}" y2="${i*CS}"/>`;
+  }
+  const map = {};                                   // 同一条边只留一条
+  const put = (x1,y1,x2,y2,isNew)=>{
+    const id = x1+","+y1+","+x2+","+y2;
+    if(!(id in map) || (isNew && !map[id].n)) map[id] = {x1,y1,x2,y2,n:isNew};
+  };
+  for(const k in painted){
+    const [r, c] = k.split(",").map(Number), pi = painted[k];
+    const x = c*CS, y = r*CS, isNew = (pi===justPlaced);
+    if(r>0   && painted[key(r-1,c)]!==pi) put(x, y,    x+CS, y,    isNew);   /* 上 */
+    if(r<N-1 && painted[key(r+1,c)]!==pi) put(x, y+CS, x+CS, y+CS, isNew);   /* 下 */
+    if(c>0   && painted[key(r,c-1)]!==pi) put(x, y,    x,    y+CS, isNew);   /* 左 */
+    if(c<N-1 && painted[key(r,c+1)]!==pi) put(x+CS, y, x+CS, y+CS, isNew);   /* 右 */
+  }
+  let rg = "";
+  for(const id in map){
+    const e = map[id];
+    rg += `<line class="rg${e.n?" new":""}" x1="${e.x1}" y1="${e.y1}" x2="${e.x2}" y2="${e.y2}"/>`;
+  }
+  edges.style.setProperty("--ew", ew+"px");
+  edges.style.width = W+"px";  edges.style.height = W+"px";
+  edges.setAttribute("viewBox", `0 0 ${W} ${W}`);
+  /* 平移 0.5px：让线条落在像素中心，避免半像素模糊（外框由 CSS 边框绘制，本来就清晰） */
+  edges.innerHTML = `<g transform="translate(0.5,0.5)">${gl}${rg}</g>`;
+}
+
+function renderChrome(){
+  const n = Object.keys(placed).length;
+  prog.textContent = n + " / 9";
+  progbar.style.width = (n/9*100)+"%";
+  const modeName = {value:"大数", note:"候选", erase:"划候选"}[mode];
+  modeEl.textContent = "模式：" + modeName + (armed!==null ? " · 数字 "+armed : "");
+  document.querySelectorAll(".modes .mbtn").forEach(b=>
+    b.classList.toggle("on", b.dataset.mode===mode));
+  /* 数字键盘：余量 + 已拿起 */
+  const g = givensAll();
+  const used = {};
+  for(const k in g) used[g[k]] = (used[g[k]]||0)+1;
+  for(const k in user) used[user[k]] = (used[user[k]]||0)+1;
+  for(let v=1;v<=9;v++){
+    const b = pad.querySelector('button[data-d="'+v+'"]');
+    if(!b) continue;
+    const left = 9 - (used[v]||0);
+    b.querySelector(".cnt").textContent = left > 0 ? left : "✓";
+    b.classList.toggle("done", left <= 0);
+    b.classList.toggle("armed", armed===v);
+    b.title = `数字 ${v}：还剩 ${left} 个`;
+  }
+  /* 状态条 */
+  const filled = Object.keys(g).length + Object.keys(user).length;
+  document.getElementById("fillinfo").innerHTML = "填数 <b>"+filled+"</b>/81";
+  const cm = document.getElementById("checkmode");
+  cm.innerHTML = "⚠ 判错：" + (instantCheck ? "开" : "关");
+  cm.classList.toggle("off", !instantCheck);
+  const cc = document.getElementById("cleancand");
+  cc.innerHTML = "🧼 自动清候选：" + (autoClean ? "开" : "关");
+  cc.classList.toggle("off", !autoClean);
+  const hn = document.getElementById("hidenotes");
+  hn.innerHTML = notesHidden ? "👁 显示候选" : "👁 隐藏候选";
+  hn.classList.toggle("on", notesHidden);
+  const ac = document.getElementById("autocand");
+  const acOn = autoCandBackup !== null;
+  ac.innerHTML = acOn ? "✖ 取消自动候选" : "✨ 自动候选";
+  ac.classList.toggle("on", acOn);
+  const rb2 = document.getElementById("rejig");
+  rb2.disabled = (n === 0);
+  const hb = document.getElementById("hint");
+  if(hb && SOL){
+    hb.disabled = (hintLeft <= 0);
+    hb.innerHTML = hintLeft > 0 ? ("💡 提示一格 · " + hintLeft) : "💡 提示已用完";
+    hb.title = hintLeft > 0
+        ? ("整局最多提示 " + hintMax + " 次，还剩 " + hintLeft + " 次")
+        : ("整局最多提示 " + hintMax + " 次，已经用完");
+  }
+  document.getElementById("reset").innerHTML = (n === 9) ? "🧹 重置填写" : "🔄 重置";
+  document.getElementById("reset").title = (n === 9)
+      ? "只清空你填的数字与候选，拼好的碎片保留" : "碎片回托盘、填写清空、计时归零";
+  const ub = document.getElementById("undobtn"), rb = document.getElementById("redobtn");
+  ub.innerHTML = "↶ 撤销" + (hist.length ? " <b>"+hist.length+"</b>" : "");
+  rb.innerHTML = "↷ 重做" + (redoStack.length ? " <b>"+redoStack.length+"</b>" : "");
+  ub.classList.toggle("off", hist.length===0);
+  rb.classList.toggle("off", redoStack.length===0);
+  document.getElementById("armedinfo").textContent =
+    armed===null ? "" : `已拿起数字 ${armed} —— 点格子填；Esc 取消`;
+  paintClock();
+  /* 上下文条 */
+  let html = "";
+  if(pickPiece!==null){
+    html = `<span>已拿起 <b>第 ${pickPiece+1} 块</b> —— 点棋盘格子放下</span>
+            <button data-act="cancel">放回托盘</button>`;
+  } else if(pickCell){
+    const pi = pieceAt(pickCell[0], pickCell[1]);
+    if(pi>=0) html = `<span>第 ${pi+1} 块（已放置）</span>
+                      <button data-act="take">↩ 取回这块</button>`;
+  }
+  if(html){ ctx.innerHTML = html; ctx.classList.add("show"); }
+  else { ctx.classList.remove("show"); ctx.innerHTML = ""; }
+  ctx.querySelectorAll("button").forEach(b=>{
+    b.onclick = ()=>{
+      if(b.dataset.act==="cancel"){ pickPiece = null; setMsg("已放回托盘","info"); render(); }
+      else if(b.dataset.act==="take"){ const pi = pieceAt(pickCell[0],pickCell[1]); if(pi>=0) takeBack(pi); }
+    };
+  });
+}
+
+function render(){
+  renderBoard();
+  // 空棋盘时显示一句很淡的引导，拼上第一块就淡出
+  const bb = document.querySelector(".boardbox");
+  if(bb) bb.classList.toggle("haspieces", Object.keys(placed).length > 0);
+}
+
+function setMsg(t,cls){
+  msg.textContent = t;
+  msg.className = (cls||"info") + " pop";
+  clearTimeout(setMsg._t);
+  setMsg._t = setTimeout(()=>msg.classList.remove("pop"), 360);
+}
+
+/* ==================== 冲突检测 ==================== */
+function conflicts(){
+  const g = givensAll(), all = Object.assign({}, g, user);
+  const bad = {}, groups = [];
+  for(let i=0;i<N;i++){
+    groups.push(Array.from({length:N},(_,c)=>[i,c]));
+    groups.push(Array.from({length:N},(_,r)=>[r,i]));
+  }
+  for(const pi in placed) groups.push(placedCells(+pi));
+  for(const grp of groups){
+    const seen = {};
+    for(const [r,c] of grp){
+      const v = all[key(r,c)];
+      if(!v) continue;
+      if(seen[v]){ bad[key(r,c)] = 1; bad[seen[v]] = 1; }
+      else seen[v] = key(r,c);
+    }
+  }
+  return bad;
+}
+
+/* ==================== 选格 / 填数 ==================== */
+function pieceAt(r,c){
+  for(const pi in placed)
+    if(placedCells(+pi).some(([y,x])=>y===r&&x===c)) return +pi;
+  return -1;
+}
+function selectCell(r,c){
+  pickCell = [r,c];
+  const giv = givensAll()[key(r,c)];
+  if(giv) setMsg(`(${r+1},${c+1}) 是碎片上印好的提示数，不能改`,"info");
+  render();
+}
+function inputDigit(v){
+  if(!pickCell){ setMsg("先点一个格子，再按数字（或直接用「自动候选」）","info"); return; }
+  return applyAt(pickCell[0], pickCell[1], v);
+}
+/* 数字优先：点数字 → 连续点格子填；再点一次同一个数字取消 */
+function tapDigit(v){
+  if(armed===v && !pickCell){ armed = null; setMsg("已取消数字 "+v,"info"); render(); return; }
+  armed = v;
+  if(pickCell) applyAt(pickCell[0], pickCell[1], v);
+  else { setMsg(`已拿起数字 ${v} —— 点格子填，Esc 取消`,"info"); render(); }
+}
+function applyAt(r,c,v,force){
+  const k = key(r,c);
+  if(givensAll()[k]){ setMsg(`(${r+1},${c+1}) 是碎片上印好的提示数，不能改`,"err"); return; }
+  const m = force || mode;          // force: "value" 强制大数 / "note" 强制候选（不改变当前模式）
+  snapshot();
+  if(v === 0){
+    if(m==="erase" && armed!==null && notes[k] && notes[k].includes(armed)){
+      removeCand(k, armed);
+    } else {
+      delete user[k]; delete notes[k];
+      setMsg(`已清除 (${r+1},${c+1})`,"info");
+    }
+  } else if(m === "erase"){
+    removeCand(k, v);
+  } else if(m === "note"){
+    if(user[k]) delete user[k];
+    toggleCand(k, v);
+    setMsg(notes[k] && notes[k].includes(v) ? `(${r+1},${c+1}) 加上候选 ${v}`
+                                            : `(${r+1},${c+1}) 去掉候选 ${v}`,"info");
+  } else {
+    if(user[k] === v){ delete user[k]; setMsg(`已取消 (${r+1},${c+1})`,"info"); }
+    else {
+      user[k] = v; delete notes[k];
+      autoCleanNotes(r,c,v);
+      if(!board.classList.contains("win")) setMsg(`已填 (${r+1},${c+1}) = ${v}`,"info");
+    }
+  }
+  if(cellEl[k]) cellEl[k].classList.add("pop");
+  render();
+}
+/* 双击数字键：无论当前什么模式都填大数，且不退出当前模式（幂等，重复按不会把数字又取消掉） */
+function forceValue(v){
+  if(pickCell){
+    const [r,c] = pickCell, k = key(r,c);
+    if(givensAll()[k]){ setMsg(`(${r+1},${c+1}) 是碎片上印好的提示数，不能改`,"err"); return; }
+    if(user[k] === v && !notes[k]){ render(); return; }      // 已经是这个状态，别再多压一条历史
+    applyAt(r, c, v, "value");
+    setMsg(`已强制填入 (${r+1},${c+1}) = ${v}（当前仍是${({value:"大数",note:"候选",erase:"划候选"})[mode]}模式）`,"ok");
+    return;
+  }
+  armed = v;
+  setMsg(`已拿起数字 ${v} —— 点格子填；Esc 取消`,"info");
+  render();
+}
+function toggleCand(k,v){
+  const arr = notes[k] ? notes[k].slice() : [];
+  const i = arr.indexOf(v);
+  if(i>=0) arr.splice(i,1); else arr.push(v);
+  arr.sort((a,b)=>a-b);
+  if(arr.length) notes[k] = arr; else delete notes[k];
+}
+function removeCand(k,v){
+  if(!notes[k] || !notes[k].includes(v)){ setMsg("这格本来就没有候选 "+v,"info"); return; }
+  notes[k] = notes[k].filter(n=>n!==v);
+  if(!notes[k].length) delete notes[k];
+  setMsg(`已划掉候选 ${v}`,"ok");
+}
+function setMode(m){
+  if(m === mode){ return; }
+  mode = m;
+  render();
+  setMsg({value:"大数模式：点格子写数字（同数字再点一次取消）",
+          note:"候选模式：点格子加/减小候选（可多选，Shift+数字也直接加）",
+          erase:"划候选模式：点格子划掉那个候选（先拿数字或直接点数字键）"}[m],"info");
+}
+/* 同行/列/区域里的相同候选清掉（可用「自动清候选」开关关闭） */
+function autoCleanNotes(r,c,v){
+  if(!autoClean) return;
+  for(const k in notes){
+    const [y,x] = k.split(",").map(Number);
+    if(sameRegion([r,c],[y,x]) && notes[k].includes(v)){
+      notes[k] = notes[k].filter(n=>n!==v);
+      if(!notes[k].length) delete notes[k];
+    }
+  }
+}
+/* 某格的“邻居”（同行 + 同列 + 同碎片） */
+function peersOf(r,c){
+  const out = [];
+  for(let i=0;i<N;i++){
+    if(i!==c) out.push([r,i]);
+    if(i!==r) out.push([i,c]);
+  }
+  const pi = regionOf(r,c);
+  if(pi >= 0) for(const [y,x] of placedCells(pi)) if(!(y===r && x===c)) out.push([y,x]);
+  return out;
+}
+/* 自动候选：再点一次可取消（还原填之前的手写标记） */
+function autoCandidates(){
+  if(autoCandBackup !== null){                       // 已处于“自动候选”状态 → 取消并还原
+    snapshot();
+    notes = autoCandBackup; autoCandBackup = null;
+    render();
+    setMsg("已取消自动候选，恢复原来的手写标记（Ctrl+Z 也可撤销）","info");
+    return;
+  }
+  if(Object.keys(placed).length < 9){ setMsg("先把 9 块碎片拼好，才能算出候选","err"); return; }
+  snapshot();
+  autoCandBackup = JSON.parse(JSON.stringify(notes));
+  const g = givensAll();
+  let cnt = 0;
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++){
+    const k = key(r,c);
+    if(g[k] || user[k]) continue;
+    const bad = new Set();
+    for(const [y,x] of peersOf(r,c)){
+      const nk = key(y,x);
+      const v = g[nk] || user[nk];
+      if(v) bad.add(v);
+    }
+    const cand = [];
+    for(let v=1;v<=9;v++) if(!bad.has(v)) cand.push(v);
+    if(cand.length) notes[k] = cand; else delete notes[k];
+    if(cand.length) cnt++;
+  }
+  render();
+  setMsg(`已为 ${cnt} 个空格算出候选（再点一次「取消自动候选」可还原，Ctrl+Z 也可撤销）`,"ok");
+}
+function placeByClick(pi, r, c){
+  const a = anchorFor(pi, r, c);
+  if(!a){ setMsg("这块放不进去（越界或重叠）","err"); shakeBoard(); return; }
+  snapshot();
+  placed[pi] = {dr:a[0], dc:a[1]};
+  pickPiece = null; justPlaced = pi;
+  clearPreview();
+  setMsg(`第 ${pi+1} 块已放下（${Object.keys(placed).length}/9）`,"ok");
+  render();
+}
+/* 点选落子时，优先“碎片的左上角放在这一格”；不行就让这一格被碎片盖住 */
+function anchorFor(pi, r, c){
+  const cands = [[r, c]];
+  const cells = PCS[pi].cells.slice().sort((a,b)=>(a[0]+a[1])-(b[0]+b[1]));
+  for(const [lr,lc] of cells) cands.push([r-lr, c-lc]);
+  for(const [dr,dc] of cands) if(fits(pi,dr,dc)) return [dr,dc];
+  const s = snapPos(pi, r, c);
+  return fits(pi, s[0], s[1]) ? s : null;
+}
+
+/* ==================== 拖拽（托盘 / 棋盘 统一处理） ==================== */
+function potentialDrag(ev, pi, from, k){
+  if(ev.button!==undefined && ev.button!==0) return;
+  ev.preventDefault();
+  const src = from==="tray"
+    ? ev.currentTarget.querySelector(".pgrid")
+    : board;
+  const r = src.getBoundingClientRect();
+  const sc = CS / TS;
+  let offX, offY;
+  if(from==="tray"){
+    offX = (ev.clientX - r.left) * sc;
+    offY = (ev.clientY - r.top)  * sc;
+  } else {
+    const [dr,dc] = [placed[pi].dr, placed[pi].dc];
+    offX = ev.clientX - (r.left + dc*CS);
+    offY = ev.clientY - (r.top  + dr*CS);
+  }
+  drag = { pi, from, k, offX, offY, sx:ev.clientX, sy:ev.clientY,
+           moved:0, started:false, origin: placed[pi] ? {...placed[pi]} : null };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
+}
+
+function buildPieceEl(pi, cs, withBg){
+  const p = PCS[pi], [R,C] = bbox(p.cells);
+  const wrap = document.createElement("div");
+  wrap.style.cssText = `position:relative;width:${C*cs}px;height:${R*cs}px;`;
+  p.cells.forEach(([r,c])=>{
+    const d = document.createElement("div");
+    d.style.cssText = `position:absolute;left:${c*cs}px;top:${r*cs}px;width:${cs}px;`
+      + `height:${cs}px;border:1px solid rgba(15,23,42,.28);border-radius:2px;`
+      + `background:${withBg?COLORS[pi%9]:"#fff"};display:flex;align-items:center;`
+      + `justify-content:center;font-weight:700;font-size:${cs*0.52}px;color:#0f172a`;
+    const v = p.digits[key(r,c)];
+    if(v) d.textContent = v;
+    wrap.appendChild(d);
+  });
+  return wrap;
+}
+
+function startGhost(ev){
+  ghost = buildPieceEl(drag.pi, CS, true);
+  ghost.id = "ghost";
+  ghost.style.position = "fixed";          // 行内样式会覆盖 #ghost 的定位
+  ghost.style.left = (ev.clientX - drag.offX)+"px";
+  ghost.style.top  = (ev.clientY - drag.offY)+"px";
+  document.body.appendChild(ghost);
+}
+
+function moveGhost(x,y){
+  if(!ghost) return;
+  const gb = gridBox();
+  const rawL = x - drag.offX, rawT = y - drag.offY;
+  const dc = Math.round((rawL - gb.x)/CS), dr = Math.round((rawT - gb.y)/CS);
+  const snapped = snapPos(drag.pi, dr, dc);
+  const ok = fits(drag.pi, snapped[0], snapped[1]);
+  const tgtL = gb.x + snapped[1]*CS, tgtT = gb.y + snapped[0]*CS;
+  const dist = Math.hypot(rawL-tgtL, rawT-tgtT);
+  const near = Math.max(0, 1 - dist/(CS*0.5));      // 越近吸得越紧
+  const k = ok ? near*near*0.85 : 0;
+  ghost.style.left = (rawL*(1-k) + tgtL*k)+"px";
+  ghost.style.top  = (rawT*(1-k) + tgtT*k)+"px";
+  showPreview(drag.pi, snapped[0], snapped[1], ok);
+}
+
+function clearPreview(){
+  previewEls.forEach(el=>el.classList.remove("pv-ok","pv-bad"));
+  previewEls = [];
+}
+function showPreview(pi,dr,dc,ok){
+  clearPreview();
+  for(const [r,c] of pieceCells(pi,dr,dc)){
+    const el = cellEl[key(r,c)];
+    if(el){ el.classList.add(ok?"pv-ok":"pv-bad"); previewEls.push(el); }
+  }
+}
+
+function onMove(ev){
+  if(!drag) return;
+  drag.moved = Math.max(drag.moved, Math.hypot(ev.clientX-drag.sx, ev.clientY-drag.sy));
+  if(!drag.started){
+    if(drag.moved < 7) return;
+    drag.started = true;
+    if(drag.from==="board"){ delete placed[drag.pi]; pickPiece = null; render(); }
+    startGhost(ev);
+  }
+  moveGhost(ev.clientX, ev.clientY);
+}
+
+function onUp(ev){
+  window.removeEventListener("pointermove", onMove);
+  window.removeEventListener("pointerup", onUp);
+  window.removeEventListener("pointercancel", onUp);
+  const d = drag; drag = null;
+  if(!d) return;
+  clearPreview();
+  if(!d.started){                                  // 没有移动 = 点选
+    if(d.from==="tray"){
+      pickPiece = (pickPiece===d.pi) ? null : d.pi;
+      pickCell = null;
+      setMsg(pickPiece===null ? "已取消选择" : `已选中第 ${d.pi+1} 块，点棋盘格子放下`,"info");
+      render();
+    } else {
+      const [r,c] = d.k.split(",").map(Number);
+      const now = Date.now();
+      if(lastTap && lastTap.k===d.k && now-lastTap.t < 380){   // 快速连点两下 = 取回
+        lastTap = null; takeBack(pieceAt(r,c)); return;
+      }
+      lastTap = {k:d.k, t:now};
+      selectCell(r,c);
+    }
+    return;
+  }
+  /* 拖拽落点判定 */
+  const g = ghost ? ghost.getBoundingClientRect() : null;
+  const gb = gridBox();
+  const cx = g ? g.left + g.width/2 : ev.clientX;
+  const cy = g ? g.top + g.height/2 : ev.clientY;
+  const inside = cx > gb.x - CS*0.5 && cx < gb.r + CS*0.5 &&
+                 cy > gb.y - CS*0.5 && cy < gb.b + CS*0.5;
+  let dr = g ? Math.round((g.top - gb.y)/CS) : -99;
+  let dc = g ? Math.round((g.left - gb.x)/CS) : -99;
+  if(!inside || dc<-2 || dc>N+1 || dr<-2 || dr>N+1){
+    finishGhost(null);
+    setMsg("这块放回托盘了 —— 拖到棋盘上才会放下","info");
+    render();
+    return;
+  }
+  const s = snapPos(d.pi, dr, dc);
+  if(fits(d.pi, s[0], s[1])){
+    placeWithAnim(d.pi, s[0], s[1]);
+  } else {
+    finishGhost(null);
+    setMsg("这里放不下：越界或和别的碎片重叠","err");
+    render();
+    shakeBoard();
+  }
+}
+
+/* 放下：幽灵飞入棋盘 + 碎片弹一下 */
+function placeWithAnim(pi,dr,dc){
+  snapshot();
+  placed[pi] = {dr, dc};
+  justPlaced = pi;
+  render();
+  const gb = gridBox();
+  if(ghost){
+    ghost.classList.add("settled");
+    ghost.style.left = (gb.x + dc*CS)+"px";
+    ghost.style.top  = (gb.y + dr*CS)+"px";
+    ghost.style.opacity = "0";
+  }
+  finishGhost(null);
+  setMsg(`第 ${pi+1} 块已放下（${Object.keys(placed).length}/9）`,"ok");
+  if(Object.keys(placed).length===9) setTimeout(()=>setMsg("拼好了！点格子开始填数 →","ok"), 420);
+}
+function finishGhost(){
+  const g = ghost; ghost = null;
+  if(g) setTimeout(()=>g.remove(), DUR+60);
+}
+function shakeBoard(){
+  board.classList.add("shake");
+  setTimeout(()=>board.classList.remove("shake"), 420);
+}
+
+/* ==================== 取回碎片 ==================== */
+function takeBack(pi){
+  if(pi===undefined || pi<0 || !placed[pi]) return;
+  snapshot();
+  const from = board.getBoundingClientRect();
+  const [dr,dc] = [placed[pi].dr, placed[pi].dc];
+  const fr = { left: from.left + dc*CS, top: from.top + dr*CS };
+  const [R,C] = bbox(PCS[pi].cells);
+  delete placed[pi];
+  if(pickPiece===pi) pickPiece = null;
+  pickCell = null;
+  justPlaced = -1;
+  render();
+  const card = tray.querySelector('.pcard[data-pi="'+pi+'"]');
+  const to = card ? card.querySelector(".pgrid").getBoundingClientRect()
+                  : { left:fr.left, top:fr.top, width:C*CS, height:R*CS };
+  const fly = buildPieceEl(pi, CS, true);
+  fly.style.cssText += `position:fixed;left:${fr.left}px;top:${fr.top}px;pointer-events:none;`
+                     + `z-index:998;opacity:.95;filter:drop-shadow(0 10px 14px rgba(15,23,42,.25));`;
+  document.body.appendChild(fly);
+  const sx = to.width/(C*CS), sy = to.height/(R*CS);
+  requestAnimationFrame(()=>{
+    fly.style.transition = `left ${DUR}ms var(--ease), top ${DUR}ms var(--ease), `
+                         + `transform ${DUR}ms var(--ease), opacity ${DUR}ms var(--ease)`;
+    fly.style.left = to.left+"px";
+    fly.style.top  = to.top+"px";
+    fly.style.transform = `scale(${sx},${sy})`;
+    fly.style.opacity = ".2";
+  });
+  setTimeout(()=>fly.remove(), DUR+80);
+  const kept = pieceCells(pi, dr, dc).some(([r,c])=>user[key(r,c)]);
+  setMsg(`第 ${pi+1} 块已取回托盘` + (kept ? "（这块上你填的数字留在棋盘上）" : ""),"info");
+}
+
+/* ==================== 按钮 ==================== */
+document.getElementById("check").onclick = async ()=>{
+  const n = Object.keys(placed).length;
+  if(n < 9){ setMsg(`还没拼完：已放 ${n}/9 块`, "err"); return; }
+  const g = givensAll(), all = Object.assign({}, g, user);
+  const bad = conflicts(), empty = [];
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++) if(!all[key(r,c)]) empty.push([r,c]);
+  render();
+  if(Object.keys(bad).length){ setMsg("有重复：同一行/列/碎片里出现了相同的数字","err"); shakeBoard(); return; }
+  if(empty.length){ setMsg(`还差 ${empty.length} 格没填`,"err"); return; }
+  if(SUBMIT){ await submitAnswer(); return; }       /* 容器题：交给服务端判分并换 flag */
+  board.classList.add("win");
+  clockStop();
+  setMsg("✅ 完全正确！用时 " + fmtMs(clockMs()),"ok");
+  sparkle();
+};
+
+/* ==================== 容器题：提交答案换 flag ====================
+   前端只知道碎片形状与提示数，答案（碎片落位 + 完整解）由服务端用 sha256 校验，
+   因此页面源码里没有任何答案，flag 也只在通关后才从服务端取回。 */
+let submitted = false;
+function showFlag(f){
+  document.getElementById("flagtext").textContent = f;
+  const box = document.getElementById("flagbox");
+  box.style.display = "block";
+  try{ box.scrollIntoView({behavior:"smooth", block:"center"}); }catch(e){}
+}
+async function submitAnswer(){
+  if(submitted) return;
+  const placement = [];
+  for(let pi=0; pi<PCS.length; pi++){
+    const p = placed[pi];
+    if(!p){ setMsg("拼图不完整","err"); return; }
+    placement.push([p.dr, p.dc]);
+  }
+  const g = givensAll(), all = Object.assign({}, g, user), grid = [];
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++) grid.push(all[key(r,c)] || 0);
+  const btn = document.getElementById("check");
+  btn.disabled = true;
+  setMsg("正在提交校验…","info");
+  try{
+    const res = await fetch("api/submit", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({placement, grid})
+    });
+    const j = await res.json().catch(()=>({ok:false, msg:"服务端返回异常"}));
+    if(j.ok){
+      submitted = true;
+      board.classList.add("win");
+      clockStop();
+      sparkle();
+      showFlag(j.flag);
+      setMsg("✅ 完全正确！用时 " + fmtMs(clockMs()),"ok");
+    }else{
+      btn.disabled = false;
+      shakeBoard();
+      setMsg("❌ " + (j.msg || "答案不正确"),"err");
+    }
+  }catch(err){
+    btn.disabled = false;
+    setMsg("提交失败（服务端不可达）：" + err,"err");
+  }
+}
+document.getElementById("copyflag").onclick = async ()=>{
+  const t = document.getElementById("flagtext").textContent;
+  try{ await navigator.clipboard.writeText(t); setMsg("已复制 FLAG 到剪贴板","ok"); }
+  catch(e){
+    const r = document.createRange(); r.selectNodeContents(document.getElementById("flagtext"));
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    setMsg("已选中 FLAG，按 Ctrl+C 复制","info");
+  }
+};
+document.getElementById("hint").onclick = ()=>{
+  if(Object.keys(placed).length<9){ setMsg("先拼完再填数","err"); return; }
+  if(hintLeft <= 0){ setMsg("提示次数已用完（整局最多 " + hintMax + " 次）","err"); return; }
+  const g = givensAll(), cand = [];
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++)
+    if(!g[key(r,c)] && user[key(r,c)]!==SOL[r*N+c]) cand.push([r,c]);
+  if(!cand.length){ setMsg("已经都对了","ok"); return; }
+  snapshot();
+  const [r,c] = cand[Math.floor(Math.random()*cand.length)];
+  user[key(r,c)] = SOL[r*N+c];
+  delete notes[key(r,c)];
+  hintKey = key(r,c);
+  hintLeft--;
+  render();
+  setMsg(`已填 (${r+1},${c+1}) = ${SOL[r*N+c]}；提示还剩 ${hintLeft} 次`,"ok");
+};
+/* 重置：拼图阶段 = 全部重来；已拼好、进入解题阶段 = 只清空填写，碎片保留 */
+function resetFill(){
+  snapshot();
+  user = {}; notes = {}; autoCandBackup = null;
+  pickCell = null; armed = null; hintKey = null;
+  hintLeft = hintMax;
+  board.classList.remove("win");
+  render();
+  setMsg("已清空填数与候选，拼好的碎片保留（Ctrl+Z 可撤销）","info");
+}
+function resetAll(){
+  snapshot();
+  placed = {}; user = {}; notes = {};
+  pickCell = null; pickPiece = null; justPlaced = -1; armed = null; hintKey = null;
+  autoCandBackup = null;
+  hintLeft = hintMax;
+  board.classList.remove("win");
+  clockReset();
+  render();
+  setMsg("已重置：碎片回托盘，计时归零","info");
+}
+document.getElementById("reset").onclick = ()=>{
+  if(Object.keys(placed).length === 9) resetFill(); else resetAll();
+};
+document.getElementById("rejig").onclick = resetAll;
+document.getElementById("autocand").onclick = autoCandidates;
+document.getElementById("hidenotes").onclick = ()=>{
+  notesHidden = !notesHidden;
+  render();
+  setMsg(notesHidden ? "已隐藏候选（数据还在，再点一次显示）" : "已显示候选","info");
+};
+document.getElementById("cleancand").onclick = ()=>{
+  autoClean = !autoClean;
+  render();
+  setMsg(autoClean ? "已开启自动清候选：填大数时自动从同行/列/碎片里清掉它"
+                   : "已关闭自动清候选（候选只在你手动划的时候变）","info");
+};
+document.getElementById("clearnotes").onclick = ()=>{
+  if(!Object.keys(notes).length){ setMsg("现在没有小标记","info"); return; }
+  snapshot(); notes = {}; autoCandBackup = null; render();
+  setMsg("已清空全部小标记（Ctrl+Z 可撤销）","info");
+};
+document.getElementById("redobtn").onclick = redo;
+document.getElementById("undobtn").onclick = undo;
+document.getElementById("clock").onclick = ()=> clockPause();
+document.getElementById("checkmode").onclick = ()=>{
+  instantCheck = !instantCheck;
+  render();
+  setMsg(instantCheck ? "已开启即时判错：冲突的数字会变红" : "已关闭即时判错（「检查」仍然可用）","info");
+};
+
+function sparkle(){
+  if(RM) return;
+  const box = document.querySelector(".boardbox");
+  const cols = ["#f59e0b","#10b981","#3b82f6","#ec4899","#8b5cf6"];
+  for(let i=0;i<20;i++){
+    const s = document.createElement("i");
+    s.className = "spark";
+    const a = Math.random()*Math.PI*2, dd = 70 + Math.random()*110;
+    s.style.setProperty("--tx", Math.cos(a)*dd+"px");
+    s.style.setProperty("--ty", Math.sin(a)*dd+"px");
+    s.style.background = cols[i%cols.length];
+    s.style.animationDelay = (Math.random()*0.18)+"s";
+    box.appendChild(s);
+    setTimeout(()=>s.remove(), 1300);
+  }
+}
+
+/* ==================== 数字键盘 ==================== */
+const pad = document.getElementById("pad");
+[1,2,3,4,5,6,7,8,9].forEach(v=>{
+  const b = document.createElement("button");
+  b.dataset.d = v;
+  b.innerHTML = v + '<span class="cnt"></span>';
+  b.onclick = ()=> tapDigit(v);
+  b.addEventListener("dblclick", ()=> forceValue(v));      // 双击 = 强制大数，不退出当前模式
+  pad.appendChild(b);
+});
+const clr = document.createElement("button");
+clr.className = "erase"; clr.dataset.d = "0";
+clr.textContent = "⌫ 擦除"; clr.title = "擦除这一格（Backspace）";
+clr.onclick = ()=> inputDigit(0);
+pad.appendChild(clr);
+
+/* ==================== 输入模式按钮 ==================== */
+document.querySelectorAll(".modes .mbtn").forEach(b=>
+  b.onclick = ()=> setMode(b.dataset.mode));
+
+/* ==================== 键盘 ==================== */
+window.addEventListener("keydown", e=>{
+  if(e.ctrlKey && (e.key==="z"||e.key==="Z")){ e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if(e.ctrlKey && (e.key==="y"||e.key==="Y")){ e.preventDefault(); redo(); return; }
+  if(e.key==="Escape"){ armed = null; pickPiece = null; clearPreview(); render();
+                        setMsg("已取消当前选择","info"); return; }
+  if(e.key==="n"||e.key==="N"){ setMode("note"); return; }
+  if(e.key==="v"||e.key==="V"){ setMode("value"); return; }
+  if(e.key==="e"||e.key==="E"){ setMode("erase"); return; }
+  if(e.key==="p"||e.key==="P"){ clockPause(); return; }
+  if(e.key==="h"||e.key==="H"){ document.getElementById("hidenotes").onclick(); return; }
+  if(e.key===" "){                                  // Space 在三种模式间轮换（开源惯例）
+    e.preventDefault();
+    setMode(mode==="value" ? "note" : mode==="note" ? "erase" : "value");
+    return;
+  }
+  if(e.key==="a"||e.key==="A"){ autoCandidates(); return; }
+  if(e.key>="1" && e.key<="9"){
+    const v = +e.key;
+    if(e.shiftKey && mode!=="erase"){         // Shift+数字 = 直接加候选（不改当前模式）
+      if(!pickCell){ setMsg("先点一个格子，再按 Shift+数字","info"); }
+      else applyAt(pickCell[0], pickCell[1], v, "note");
+    } else inputDigit(v);
+    return;
+  }
+  if(e.key==="Backspace" || e.key==="Delete" || e.key==="0"){ e.preventDefault(); inputDigit(0); return; }
+  const mv = {ArrowUp:[-1,0],ArrowDown:[1,0],ArrowLeft:[0,-1],ArrowRight:[0,1]}[e.key];
+  if(mv){
+    e.preventDefault();
+    const cur = pickCell || [0,0];
+    const r = Math.min(N-1, Math.max(0, cur[0]+mv[0]));
+    const c = Math.min(N-1, Math.max(0, cur[1]+mv[1]));
+    pickCell = [r,c]; render();
+  }
+});
+
+/* ==================== 自适应尺寸 ==================== */
+function layout(){
+  const w = Math.min(window.innerWidth - 60, 520);
+  CS = Math.max(32, Math.min(52, Math.floor(w/N)));
+  TS = Math.max(20, Math.round(CS*0.58));
+  render();
+}
+window.addEventListener("resize", layout);
+
+/* ==================== 容器题模式初始化 ====================
+   SUBMIT = true 时：按钮改叫「提交答案」；
+   没有 SOL（容器题）时「提示一格」会泄露答案，直接移除入口。 */
+if(!SOL){
+  const h = document.getElementById("hint");
+  if(h) h.remove();
+}
+if(SUBMIT){
+  const c = document.getElementById("check");
+  c.textContent = "🚩 提交答案";
+  c.title = "把拼好的碎片位置与完整解提交给服务端校验，通过后返回 FLAG";
+  document.body.classList.add("server-mode");
+  fetch("api/health").then(r=>r.json()).then(j=>{
+    if(j && j.ttl_left > 0){
+      const pill = document.createElement("span");
+      pill.className = "pill"; pill.id = "ttl";
+      pill.title = "容器剩余时间，到点自动关闭";
+      const anchor = document.getElementById("clock");
+      anchor.parentNode.insertBefore(pill, anchor.nextSibling);
+      const paint = ()=>{
+        const left = Math.max(0, j.deadline - Date.now()/1000);
+        const m = Math.floor(left/60), s = Math.floor(left%60);
+        pill.textContent = "⏳ 容器剩余 " + String(Math.floor(m/60)).padStart(2,"0") + ":"
+                         + String(m%60).padStart(2,"0") + ":" + String(s).padStart(2,"0");
+        if(left <= 0) pill.textContent = "⏳ 容器已到期";
+      };
+      paint(); setInterval(paint, 1000);
+    }
+  }).catch(()=>{});
+}
+clearHistory();
+layout();
+</script>
+</body>
+</html>

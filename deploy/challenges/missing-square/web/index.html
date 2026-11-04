@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SACC · 双形钥匙</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/game.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><a class="brand" href="/SACC">SACC<span> / PUZZLE</span></a><span class="edition">THE SHAPE STUDY</span></header>
+    <section class="intro"><div class="eyebrow">INTERACTIVE PUZZLE</div><h1>双形钥匙<span class="title-dot">.</span></h1><p>用全部拼片填满矩形，再用同样的拼片拼出钥匙。</p></section>
+    <section class="game" aria-label="拖拽拼图区">
+      <div class="game-toolbar"><span id="status" role="status" aria-live="polite">加载中</span><button id="reset" type="button" disabled>重置本关</button></div>
+      <div class="controls"><span id="selection">选择拼片</span><div><button id="rotate" type="button" disabled title="旋转 90°（R）">↻ 旋转 <kbd>R</kbd></button><button id="flip" type="button" disabled title="翻面（F）">⇄ 翻面 <kbd>F</kbd></button><button id="return" type="button" disabled>收回</button></div></div>
+      <svg id="stage" aria-label="拖动拼片填满轮廓，可用旋转和翻面按钮调整朝向" role="group"></svg>
+    </section>
+    <section id="result" class="result" hidden aria-live="polite"><div><span class="success-label">两关已完成</span><h2>拼图成功</h2></div><div class="flag-row"><code id="flag"></code><button id="copy" type="button">复制</button></div></section>
+    <footer><span>SACC</span><span>GEOMETRY / SHAPE / PLAY</span></footer>
+  </main>
+</body>
+</html>

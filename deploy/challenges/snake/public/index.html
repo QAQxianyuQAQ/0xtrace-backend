@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#071523">
+  <title>NIBBLE / 蓝色科技挑战</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <div class="site-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="NIBBLE 首页"><span class="brand-mark">n.</span>NIBBLE<span class="brand-suffix">arcade</span></a>
+      <div class="live-tag"><span></span> SACC <span class="tag-divider">/</span> 001</div>
+    </header>
+
+    <main>
+      <div class="intro">
+        <div><div class="eyebrow">NIBBLE / SECURE GAME NODE</div><h1>贪吃蛇</h1><p>两关，达到目标即可通关。</p></div>
+      </div>
+
+      <nav class="level-nav" aria-label="挑战关卡">
+        <button id="level-one" class="level-tab active" aria-current="step"><span class="tab-number">01</span> 热身回合 <span id="level-one-mark" class="tab-meta">READY</span></button>
+        <button id="level-two" class="level-tab" disabled><span class="tab-number">02</span> 十分循环 <span id="level-two-mark" class="tab-meta">LOCKED</span></button>
+      </nav>
+
+      <div class="game-layout">
+        <section class="board-card" aria-label="贪吃蛇游戏">
+          <div class="board-toolbar"><span><span class="small-dot"></span> <span id="board-label">ROUND 01</span></span><span id="game-status">待机中</span></div>
+          <div class="canvas-wrap">
+            <canvas id="game" width="600" height="600" tabindex="0" aria-label="贪吃蛇画布，使用方向键或 WASD 移动"></canvas>
+            <div id="game-overlay" class="game-overlay">
+              <div class="overlay-content"><div id="overlay-kicker" class="overlay-kicker">YOUR MOVE</div><h2 id="overlay-title"></h2><p id="overlay-description"></p><button id="play-button" class="primary">开始游戏 <span>↗</span></button><span class="overlay-key">或按 SPACE 开始</span></div>
+            </div>
+          </div>
+          <div class="board-bottom"><span><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> / WASD 移动</span><span><kbd>SPACE</kbd> 暂停</span></div>
+          <div class="touch-controls" aria-label="触屏方向控制"><button data-direction="up" aria-label="上">↑</button><div><button data-direction="left" aria-label="左">←</button><button data-direction="down" aria-label="下">↓</button><button data-direction="right" aria-label="右">→</button></div></div>
+        </section>
+
+        <aside class="sidebar">
+          <section class="score-card">
+            <div class="card-label">本关积分 <span id="round-pill">ROUND 01</span></div>
+            <div id="score" class="score-value">00000</div>
+            <div class="target-line"><span>TARGET</span><strong id="target-value">999</strong></div>
+            <div class="progress-track"><div id="progress-fill"></div></div>
+            <div class="progress-caption"><span id="progress-percent">0.000%</span><span id="raw-score-label">每一口，都算数。</span></div>
+          </section>
+
+          <section class="brief-card"><div class="card-label"><span class="rule-icon">↳</span> 回合说明</div><h2 id="brief-title">从第一口开始。</h2><p id="brief-text">每吃到一个光点，积分 +1。达到 999 分即可开启下一关。撞墙或撞到自己会结束这局，累计积分保留。</p><div class="brief-note" id="brief-note">耐心是一种解法。好奇心也是。</div></section>
+
+          <section class="tools-card"><label for="palette">换个心情 <span>PALETTE</span></label><div class="palette-row"><select id="palette"><option value="mint">冰蓝脉冲</option><option value="violet">电光紫</option><option value="amber">深海蓝</option></select><span class="palette-swatch" id="palette-swatch"></span></div><p id="palette-help">选择你的游戏配色。</p><button id="source-button" class="text-button" hidden>查看计分服务源码 <span>↗</span></button></section>
+          <button id="reset-button" class="reset-button">↺ 重置整个挑战</button>
+        </aside>
+      </div>
+
+      <section id="completion" class="completion" hidden aria-live="polite"><div><span class="eyebrow">CHALLENGE COMPLETE</span><h2>你喂饱了这条蛇。</h2><p>两关已完成，这是你的战利品。</p></div><div class="flag-wrap"><code id="flag-value"></code><button id="copy-flag" class="secondary">复制 Flag</button></div></section>
+      <section id="source-panel" class="source-panel" hidden><div class="source-header"><h2>计分服务 / 部署源码</h2><button id="close-source" class="text-button">收起 ×</button></div><p>这是当前运行的第二关模块，偏好配置通过 <code>POST /api/profile</code> 保存。</p><pre><code id="source-code"></code></pre></section>
+      <div id="toast" class="toast" role="status" hidden></div>
+    </main>
+    <footer><span>SACC / NIBBLE</span><span>2026</span></footer>
+  </div>
+</body>
+</html>

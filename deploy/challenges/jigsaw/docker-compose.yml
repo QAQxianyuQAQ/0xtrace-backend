@@ -1,0 +1,15 @@
+# 本机自测用（平台上线时按平台的容器配置走，不需要这个文件）
+#   docker compose up --build     然后用浏览器打开 http://127.0.0.1:8080/
+services:
+  jigsaw-sudoku:
+    build: .
+    image: sacc/jigsaw-sudoku:1.0
+    container_name: jigsaw-sudoku
+    ports:
+      - "8080:8080"
+    environment:
+      FLAG: "SACC{local-test-only}"
+      FLAG_ENV: "FLAG"
+      TTL_SECONDS: "7200"
+      SUBMIT_LIMIT_PER_MIN: "20"
+    restart: "no"

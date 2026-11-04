@@ -1,0 +1,7 @@
+test
+author
+README.md
+node_modules
+*.zip
+*.log
+.git

@@ -1,0 +1,38 @@
+# 容器题登记信息（提交平台时按平台表单逐项填；字段名如与平台不一致，以平台为准）
+title: 异形数独拼图
+subtitle: 9 块不规则碎片拼成 9×9，再解一道不规则数独
+author: SANXIANGBEI
+category: misc            # 建议分类：misc / puzzle
+difficulty: 中等
+score: 300
+hidden: false
+type: container
+flag_format: 'SACC\{[^}]+\}'
+flag_env: FLAG            # 平台注入正确 flag 的环境变量名，必须与服务端 FLAG_ENV 一致
+image: sacc/jigsaw-sudoku:1.0
+port: 8080                # 容器内监听端口
+protocol: http            # 平台按 http://<容器>:8080/ 暴露给选手
+ttl_seconds: 7200         # 2 小时后容器自动退出
+submits_per_minute: 20    # 每个 IP 每分钟最多提交次数（服务端限流）
+healthcheck: /api/health
+
+description: |
+  给你 9 块形状各异的碎片，每块上都印着几个数字。
+  ① 把 9 块拼成一个 9×9 的正方形（碎片不能旋转，数字要保持正立）；
+  ② 拼好之后，每行、每列、每块碎片内的数字必须是 1–9 各出现一次 —— 也就是一道
+     「不规则的数独」。把完整的解和碎片位置一起提交，服务器校验通过就会把 flag 给你。
+
+tips:
+  - 拼法是唯一的：拼错位置时，碎片上的提示数会对不上号。
+  - 拼图的形状本身就是数独的「宫」，碎片交界处的粗线就是宫界。
+  - 网页支持候选（小标记）、自动候选、撤销重做、计时暂停；快捷键见页面顶部说明。
+
+hints:
+  - 先看哪几块只有一个方向能放（碎片不可旋转，能放的位置很少）。
+  - 拼好之后，线索数最少的那一块通常是最好的突破口。
+  - 每行/每列/每块只差一个数字时，直接排除法就能定位。
+
+deploy_notes: |
+  运行容器时必须注入正确 flag：
+    docker run --rm -p 8080:8080 -e FLAG='SACC{真正要填的flag}' sacc/jigsaw-sudoku:1.0
+  没给 FLAG（或给了空值）时容器会立刻报错退出，不会带着空 flag 上线。

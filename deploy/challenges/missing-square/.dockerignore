@@ -1,0 +1,9 @@
+*
+!Dockerfile
+!app.py
+!entrypoint.py
+!puzzle.py
+!sessions.py
+!read_flag.py
+!web
+!web/**

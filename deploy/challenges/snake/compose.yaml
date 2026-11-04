@@ -1,0 +1,12 @@
+services:
+  snake-ctf:
+    image: sacc/snake-ctf:latest
+    build: .
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    mem_limit: 384m
+    cpus: 1.0
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
