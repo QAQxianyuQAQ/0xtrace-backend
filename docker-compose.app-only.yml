@@ -51,6 +51,10 @@ services:
       # 应用密钥
       TQ_JWT_SECRET: ${TQ_JWT_SECRET:?请在 .env 中设置 TQ_JWT_SECRET}
       TQ_ANSWER_SECRET: ${TQ_ANSWER_SECRET:?请在 .env 中设置 TQ_ANSWER_SECRET}
+      # 南邮认证：先完成身份表迁移和可信 HTTPS，再启用。
+      TQ_NJUPT_AUTH_ENABLED: ${TQ_NJUPT_AUTH_ENABLED:-false}
+      TQ_NJUPT_CHECK_KEY: ${TQ_NJUPT_CHECK_KEY:-1629428467008}
+      TQ_NJUPT_APP_ID: ${TQ_NJUPT_APP_ID:-common}
       # 会话与来源校验
       TQ_COOKIE_SECURE: ${TQ_COOKIE_SECURE:-false}
       TQ_ENFORCE_SAME_ORIGIN: ${TQ_ENFORCE_SAME_ORIGIN:-true}

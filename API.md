@@ -59,9 +59,9 @@ username 为 1–32 个字母、数字、点、下划线或连字符，首位为
 
 ### 配置与上线前置条件
 
-默认 TQ_NJUPT_AUTH_ENABLED=false；设置为 true 开启。TQ_NJUPT_CHECK_KEY 默认 1629428467008（须为 13 位数字）；TQ_NJUPT_APP_ID 默认 common。这是公开协议参数，不是本站密钥或学校密码。
+默认 TQ_NJUPT_AUTH_ENABLED=false；在可信 HTTPS 与 Secure Cookie 就绪后设置为 true 开启。docker-compose.yml 与 docker-compose.app-only.yml 均显式透传这三个 NJUPT 变量；仅修改 .env 不会更新已有容器，需要仅重建后端 app 服务。TQ_NJUPT_CHECK_KEY 默认 1629428467008（须为 13 位数字）；TQ_NJUPT_APP_ID 默认 common。这是公开协议参数，不是本站密钥或学校密码。
 
-已有数据库必须先备份并手工应用 src/main/resources/sql/V2__njupt_identities.sql，再开启新后端；应用不会自动迁移既有数据库。本地 Docker 库已备份并手工添加此表，原有账号和业务数据保留；生产库尚未迁移。新建库 schema 与 H2 fixture 已包含此表。
+已有数据库必须先备份并手工应用 src/main/resources/sql/V2__njupt_identities.sql，再开启新后端；应用不会自动迁移既有数据库。本地 Docker 库与 2026-11-05 的生产部署均已备份并手工添加此表，原有账号和业务数据保留；其他既有安装须逐一核实，不能据此跳过迁移检查。新建库 schema 与 H2 fixture 已包含此表。
 
 部署容器须具备访问学校 HTTPS 443 的出口；仅接入 internal Docker 网络时无法认证。本地预览仅给 backend 增加既有 gateway 网络，未发布新的后端端口。
 
