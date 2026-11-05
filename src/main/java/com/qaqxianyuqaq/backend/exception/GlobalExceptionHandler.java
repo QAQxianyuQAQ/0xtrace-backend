@@ -19,6 +19,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.List;
@@ -71,6 +72,12 @@ public class GlobalExceptionHandler {
         return badRequest(List.of(new FieldErrorVO(exception.getParameterName(), "缺少必填参数")));
     }
 
+    /** 文件字段缺失时返回字段错误，避免落入通用 500。 */
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ErrorVO> handleMissingPart(MissingServletRequestPartException exception) {
+        return badRequest(List.of(new FieldErrorVO(exception.getRequestPartName(), "缺少必填文件")));
+    }
+
     /** 处理请求体解析失败。 */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorVO> handleUnreadable(HttpMessageNotReadableException exception) {
@@ -81,7 +88,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
     public ResponseEntity<ErrorVO> handleMediaType(HttpMediaTypeNotSupportedException exception) {
         return ResponseEntity.status(ErrorCode.UNSUPPORTED_MEDIA_TYPE.status())
-                .body(ErrorVO.of(ErrorCode.UNSUPPORTED_MEDIA_TYPE.code(), "请求需使用 application/json",
+                .body(ErrorVO.of(ErrorCode.UNSUPPORTED_MEDIA_TYPE.code(), "请求的 Content-Type 不受支持",
                         RequestUtil.currentRequestId()));
     }
 

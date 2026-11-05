@@ -50,6 +50,10 @@ mybatis-plus:
 
 # 应用级配置：认证、存储、限流、上传与初始化数据
 tracequest:
+  njupt:
+    enabled: ${TQ_NJUPT_AUTH_ENABLED:false}
+    check-key: ${TQ_NJUPT_CHECK_KEY:1629428467008}
+    app-id: ${TQ_NJUPT_APP_ID:common}
   jwt:
     # 令牌签名密钥：必须由 TQ_JWT_SECRET 注入（建议 32 字节以上随机值）
     secret: ${TQ_JWT_SECRET}

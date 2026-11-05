@@ -84,6 +84,16 @@ class TraceQuestApiIntegrationTest {
 
         String contestantSession = login("field_129", "secret123");
 
+        // 新账号尚无提交和解题记录时，也必须返回有效的空列表与零进度。
+        mockMvc.perform(get("/api/v1/me/submissions").cookie(sessionCookie(contestantSession)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items").isEmpty());
+        mockMvc.perform(get("/api/v1/me/progress").cookie(sessionCookie(contestantSession)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.solved").value(0))
+                .andExpect(jsonPath("$.score").value(0));
+
+
         // 4. 选手端题目列表不返回答案字段
         MvcResult listResult = mockMvc.perform(get("/api/v1/challenges").cookie(sessionCookie(contestantSession)))
                 .andExpect(status().isOk())

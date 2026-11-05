@@ -1,5 +1,76 @@
 # TraceQuest 前端 API 文档
 
+## 2026-11-05：南邮统一身份认证登录（本次新增）
+
+**实现状态：** Java 后端与 Vue 入口已实现并启用于本地 Docker 预览。学校认证已完成本地测试；Docker 浏览器已检查真实本地登录、手机排版及拦截响应。学校测试使用本地 HTTP fixture，不使用真实学校账号。尚未进行学校生产联调、生产数据库迁移或远端部署。本节为现有认证契约的增量；历史原型章节不能覆盖本节或真实 Java Controller。
+
+### 入口与会话
+
+| 方法 / 路径 | 权限 | 行为 |
+|---|---|---|
+| GET /api/v1/auth/providers | 公开 | 返回 {"local":true,"njupt":false}；njupt 由服务器开关决定 |
+| POST /api/v1/auth/njupt/login | 公开、受登录限流约束 | 接收学号与学校密码，经学校认证成功后签发本站 HttpOnly Cookie |
+| POST /api/v1/auth/login | 公开、受登录限流约束 | 保留原赛事账号和管理员登录；njupt: 前缀的学校身份禁止走本地密码入口 |
+| GET /api/v1/auth/me | 已登录 | 契约保持不变，以本站账号角色和停用状态为准 |
+
+学校登录 JSON 请求：
+
+```json
+{"username":"B25000000","password":"学校统一认证密码"}
+```
+
+username 为 1–32 个字母、数字、点、下划线或连字符，首位为字母或数字；服务端去除首尾空白并转大写。密码必须非空且不超过 256 个 Java UTF-16 字符，不 trim，不使用本地 BCrypt 的 72 字节上限。原本地请求契约保持不变。
+
+成功响应沿用 LoginVO：userId、username、role=contestant、teamId（首次为 null）、expiresAt；响应体不包含 token 或密码。本站 HttpOnly Cookie 的 Secure / SameSite 继续由既有配置控制。学校 token 仅用于确认上游成功，不写 Cookie、不返回浏览器、不持久化；本站 JWT 使用本站密钥签发。
+
+### 学校请求协议
+
+- 后端仅请求固定 HTTPS https://i.njupt.edu.cn/ssoLogin/login，保留系统证书校验，不跟随重定向。
+- checkKey 默认 1629428467008；key = IV = ASCII("iam" + checkKey)，默认恰为 16 字节。
+- username / password 使用 AES-128-CBC / PKCS7 加密并输出小写 hex；captchaVerification=null、appId=common、mode=none；请求头 Tenant-Id: 0 并设置学校 Origin / Referer。
+- 不获取或绕过滑块验证，不接受客户端提供任意上游地址或学校 token。学校要求二次验证时停止认证。
+- 连接超时 5 秒、读取超时 10 秒、总调用超时 15 秒；响应上限 64 KiB。成功必须有布尔 success=true、整数 code=200、非空 result.token；若有 userInfo.username，必须与学号一致。
+- 给定向量 B25041114 → d731f8de34f229e1ad49cde8eac4f8ac 已纳入回归。固定 AES 参数仅兼容学校协议，不能代替 HTTPS。
+
+### 身份、权限与限流
+
+- 新增 njupt_identities(subject,user_id) 独立关联；subject 为主键，user_id 唯一。
+- 首次学校认证成功后，事务内原子创建 username=njupt:学号 的普通选手及关联，初始 role=CONTESTANT、status=ACTIVE。密码列仅存随机占位密码的 BCrypt hash。
+- 后续按关联复用同一 userId，保留队伍、积分、解题记录与停用状态，不按同名学号接管已有本地账号。
+- 并发首登由唯一约束去重，失败事务整体回滚；冲突且无身份关联时返回 409，不接管预占用户名。
+- 学校身份被重置本地密码后也不能走本地登录；停用账号或已改为管理员角色的关联账号不能走学校入口。
+- 学校和本地登录共用按 IP 的 login 配额，密码失败累计到 njupt:学号。验证码、网络故障不计作密码错误；只有认证成功后才建立账号。
+
+### 错误响应
+
+沿用 {"error":{"code":"...","message":"...","details":[]},"requestId":"..."} 包络，敏感上游正文不透传。
+
+| HTTP / code | 含义 |
+|---|---|
+| 400 VALIDATION_ERROR | 学号或密码字段无效 |
+| 401 INVALID_CREDENTIALS | 学校拒绝学号/密码 |
+| 403 FORBIDDEN | 学校入口未启用，或关联角色不允许 |
+| 403 ACCOUNT_DISABLED | 本站账号已停用 |
+| 409 NJUPT_CAPTCHA_REQUIRED | 学校要求滑块；当前未集成 AJ-Captcha，停止登录 |
+| 409 NJUPT_ACCOUNT_ACTION_REQUIRED | 先完成学校账号设置（code 511/512） |
+| 409 CONFLICT | 身份关联冲突，须管理员处理 |
+| 429 RATE_LIMITED | 本站限流、失败锁定或学校 429 |
+| 503 NJUPT_AUTH_UNAVAILABLE | 学校超时、HTTP 错误、异常响应或身份不一致 |
+
+### 配置与上线前置条件
+
+默认 TQ_NJUPT_AUTH_ENABLED=false；设置为 true 开启。TQ_NJUPT_CHECK_KEY 默认 1629428467008（须为 13 位数字）；TQ_NJUPT_APP_ID 默认 common。这是公开协议参数，不是本站密钥或学校密码。
+
+已有数据库必须先备份并手工应用 src/main/resources/sql/V2__njupt_identities.sql，再开启新后端；应用不会自动迁移既有数据库。本地 Docker 库已备份并手工添加此表，原有账号和业务数据保留；生产库尚未迁移。新建库 schema 与 H2 fixture 已包含此表。
+
+部署容器须具备访问学校 HTTPS 443 的出口；仅接入 internal Docker 网络时无法认证。本地预览仅给 backend 增加既有 gateway 网络，未发布新的后端端口。
+
+生产须先配置可信 HTTPS 与 Secure Cookie。前端学校入口仅允许 HTTPS 或 HTTP localhost / 127.0.0.1 / ::1 本机开发，不应在公网 HTTP 地址输入学校密码。前端只请求同源 /api/v1，不储存学校凭据；模式切换、提交结束后清空密码，不把学校登录失败自动重试到本地登录。
+
+Vue 根据 providers 选择入口；返回 404 的旧后端明确提示“尚未接入学校认证”，保留原赛事账号登录。其他读取失败禁用提交并提供重试，不静默切换认证方式。
+
+
+
 > 适用版本：当前 `main` 工作区
 > 盘点日期：2026-10-28
 > API 根路径：`/api/v1`
@@ -1114,3 +1185,49 @@ remainingSeconds <= 1800
 `GET /api/v1/files/{fileId}` 保持登录鉴权，成功响应由 `302` 预签名跳转改为 `200` 同源二进制流。内容仍存放在 MinIO；不对浏览器返回存储地址、凭据或可转赠的签名链接。响应带 `Content-Length` 和 `Cache-Control: no-store`；附件使用 `application/octet-stream` 及包含原始 UTF-8 文件名的 `Content-Disposition: attachment`，封面使用保存的图片 MIME 类型及 `inline`。匿名请求 `401`；文件不存在、题目不存在或选手无权查看该题时 `404`；管理员可预览未发布题目的文件。文件读取失败返回既有存储错误，流式传输中断由客户端判为下载失败。
 
 题目列表/详情中的 `coverUrl` 与 `attachments[].downloadUrl` 均继续使用 `/api/v1/files/{fileId}`，无需变更请求字段。前端下载继续通过同源会话读取；上传封面读取失败时不再替换成默认自然素材，避免显示不属于该题的图片。未登录时受保护封面不可读取，登录后重新进入题目列表加载。
+
+
+## 个人头像文件上传 · 2026-11-05
+
+本节为当前新增契约，替代旧版“后端不支持个人头像上传”的说明。所有路径均以 /api/v1 为前缀。
+
+| 方法 | 路径 | 权限 | 成功响应 |
+|---|---|---|---|
+| POST | /api/v1/me/avatar | 已登录的 ADMIN、CONTESTANT，仅本人 | 201，ProfileVO |
+| GET | /api/v1/avatars/{userId}/{avatarId} | 已登录；只读当前有效版本 | 200，image/png 图片字节 |
+
+上传请求使用 multipart/form-data，必填字段为 file。请让浏览器生成 multipart boundary，不要手动写 Content-Type。服务端从会话取得目标账号，不接受 userId、对象键或文件路径参数。成功后已经将 URL 保存到 users.avatar_url，无须再 PATCH 一次头像地址。
+
+成功响应示例：
+
+```json
+{
+  "username": "example",
+  "nickname": "示例选手",
+  "avatarUrl": "/api/v1/avatars/usr_example123/avatar_0123456789abcdefgh"
+}
+```
+
+- 服务端接收 PNG/JPEG，单文件最多 8 MiB；MIME 声明必须匹配实际可解码内容，禁止 SVG、HTML、伪装图片。文件名不参与存储键生成。
+- 解码前校验单边不超过 8192 像素、总像素不超过 16777216。服务端居中裁剪、重编码为 512×512 PNG，不保留原文件的元数据或尾随内容；使用内存图像流，二进制持久化只经过 MinIO。
+- 前端允许选取 PNG/JPEG/WebP/AVIF，经现有裁剪器导出 JPEG 文件后上传；不把 Data URL 写入个人资料接口或 localStorage。
+- MinIO 对象键使用 challenges/profile-avatars/{userId}/{avatarId}.png，复用现有应用账号的 challenges/* 授权；不扩张桶策略，也不修改现有题目文件。以后迁移独立头像授权时需同步迁移该前缀。
+- 返回同源版本 URL，不暴露 MinIO 内网地址、密钥或原始上传文件。GET 要求登录，不允许匿名读取；Content-Type 为 image/png，含 nosniff、inline 和 Cache-Control: no-store。
+- 每个账号每分钟默认最多 6 次上传，失败请求也计入；配置项为 tracequest.rate-limit.avatar-upload-per-minute，超限返回 429 和 Retry-After。继承 Cookie、同源写入校验与审计规则。
+- 同一账号并发头像替换以数据库行锁串行处理，仅更新 avatar_url 字段，不覆盖昵称、角色、队伍或密码。
+- 新对象保存失败时不改变原地址；数据库回滚时回收新对象；提交成功后回收旧的受管理头像。旧版本 URL 返回 404。存储回收失败写服务端告警，可能遗留待运维清理的孤立对象，不删除当前有效头像或任何外部 URL 指向的文件。
+- 现有 PATCH /api/v1/me/profile 的昵称和头像 URL 契约保持兼容。关于页面的出题人头像管理属于另一套内容接口，本次不新增。
+
+| 状态 | 错误码 | 场景 |
+|---|---|---|
+| 400 | VALIDATION_ERROR | file 缺失、空文件或像素尺寸超限 |
+| 401 | UNAUTHORIZED | 未登录或会话过期 |
+| 403 | ORIGIN_REJECTED | 写入请求来源被拒绝 |
+| 404 | NOT_FOUND | 头像不存在、旧版本、非法路径或停用账号 |
+| 413 | PAYLOAD_TOO_LARGE | 单文件超过 8 MiB 或上传请求超过全局体积限制 |
+| 415 | UNSUPPORTED_MEDIA_TYPE | 请求未使用 multipart/form-data |
+| 422 | UNSUPPORTED_FILE_TYPE | 非 PNG/JPEG、内容与 MIME 不符或图片无法解码 |
+| 429 | RATE_LIMITED | 超过账号上传频率限制 |
+| 500 | STORAGE_ERROR | MinIO 写入或读取失败 |
+
+错误沿用 {error:{code,message,details},requestId}，上传失败时前端保留裁剪状态并显示服务端错误。昵称保存与文件上传为两次独立请求；若昵称已保存而文件失败，前端明确显示上传失败并允许重试，不声称整个资料操作具有跨请求原子性。

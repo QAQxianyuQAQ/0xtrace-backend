@@ -10,6 +10,9 @@ import org.springframework.http.HttpStatus;
 public enum ErrorCode {
 
     VALIDATION_ERROR(HttpStatus.BAD_REQUEST, "请求字段无效"),
+    NJUPT_AUTH_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "学校认证暂时不可用，请稍后重试"),
+    NJUPT_CAPTCHA_REQUIRED(HttpStatus.CONFLICT, "学校要求滑块验证，请联系管理员使用参赛账号登录"),
+    NJUPT_ACCOUNT_ACTION_REQUIRED(HttpStatus.CONFLICT, "请先在学校统一认证页面完成账号设置"),
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "账号或密码错误"),
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "未登录或登录已过期"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "权限不足"),

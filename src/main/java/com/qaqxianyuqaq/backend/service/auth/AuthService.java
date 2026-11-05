@@ -12,6 +12,9 @@ public interface AuthService {
     /** 校验账号密码并签发 JWT 会话。 */
     AuthSessionVO login(LoginDTO request, String clientIp);
 
+    /** 经学校验证后关联普通选手账号并签发本站会话。 */
+    AuthSessionVO loginNjupt(LoginDTO request, String clientIp);
+
     /** 登出并使当前令牌失效。 */
     void logout(String jwtId, long remainingSeconds);
 

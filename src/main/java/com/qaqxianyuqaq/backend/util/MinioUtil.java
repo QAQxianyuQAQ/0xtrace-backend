@@ -1,6 +1,12 @@
 package com.qaqxianyuqaq.backend.util;
 
 import io.minio.BucketExistsArgs;
+import io.minio.GetObjectArgs;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import java.io.IOException;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.GetObjectArgs;
 import io.minio.MakeBucketArgs;
@@ -22,6 +28,8 @@ public final class MinioUtil {
 
     /** 预签名下载地址默认有效期，遵循短效原则。 */
     public static final Duration DEFAULT_PRESIGN_TTL = Duration.ofMinutes(5);
+
+    private static final Logger log = LoggerFactory.getLogger(MinioUtil.class);
 
     private MinioUtil() {
     }
@@ -53,6 +61,42 @@ public final class MinioUtil {
     /** 删除对象，删除失败由调用方决定是否忽略。 */
     public static void removeObject(MinioClient client, String bucket, String storageKey) throws Exception {
         client.removeObject(RemoveObjectArgs.builder().bucket(bucket).object(storageKey).build());
+    }
+
+    /** 有界读取对象并关闭网络连接，避免向客户端泄露对象存储地址。 */
+    public static byte[] readObject(MinioClient client, String bucket, String storageKey, int maxBytes)
+            throws Exception {
+        try (var input = client.getObject(GetObjectArgs.builder().bucket(bucket).object(storageKey).build())) {
+            byte[] data = input.readNBytes(maxBytes + 1);
+            if (data.length > maxBytes) throw new IOException("对象超出读取限制");
+            return data;
+        }
+    }
+
+    /** 清理失败仅记告警，不能把已经提交的业务变更误报为失败。 */
+    public static void removeObjectQuietly(MinioClient client, String bucket, String storageKey) {
+        if (storageKey == null) return;
+        try {
+            removeObject(client, bucket, storageKey);
+        } catch (Exception exception) {
+            log.warn("对象回收失败，需后续重试: key={}", storageKey, exception);
+        }
+    }
+
+    /** 数据库提交后回收旧头像，回滚时回收新头像，避免提前删除有效文件。 */
+    public static void cleanupReplacementAfterTransaction(MinioClient client, String bucket,
+                                                          String newKey, String oldKey) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                removeObjectQuietly(client, bucket, oldKey);
+            }
+
+            @Override
+            public void afterCompletion(int status) {
+                if (status != STATUS_COMMITTED) removeObjectQuietly(client, bucket, newKey);
+            }
+        });
     }
 
     /** 生成短效预签名下载地址，供选手下载附件时重定向。 */

@@ -228,7 +228,8 @@ public class SubmissionServiceImpl implements SubmissionService {
         long total = challengeMapper.selectCount(Wrappers.<Challenge>lambdaQuery()
                 .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED)
                 .eq(Challenge::getEventId, event.getId()));
-        Map<String, String> codeById = challengeMapper.selectBatchIds(
+        // 未解题时不发起空集合查询，首次登录也能读取零进度。
+        Map<String, String> codeById = solves.isEmpty() ? Map.of() : challengeMapper.selectBatchIds(
                         solves.stream().map(Solve::getChallengeId).distinct().toList())
                 .stream().collect(Collectors.toMap(Challenge::getId, Challenge::getCode));
         List<String> solvedCodes = solves.stream()

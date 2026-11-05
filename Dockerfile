@@ -1,11 +1,14 @@
 # 构建阶段：使用 Maven + JDK 25 编译打包
 FROM maven:3.9.11-eclipse-temurin-25 AS build
 WORKDIR /workspace
-# 先解析依赖，充分利用构建缓存
+# Maven 缓存跨构建保留，避免 go-offline 下载与运行无关的插件依赖
 COPY pom.xml ./
-RUN mvn -B -q dependency:go-offline
 COPY src ./src
-RUN mvn -B -q -DskipTests package
+RUN --mount=type=cache,target=/root/.m2 mvn -B -q -DskipTests package
+
+# 验证阶段：可独立构建 --target test，执行单元与 H2 集成回归。
+FROM build AS test
+RUN --mount=type=cache,target=/root/.m2 mvn -B -q test -Dtest.excluded.groups=none
 
 # 运行阶段：仅保留 slim JRE 25 运行时
 FROM eclipse-temurin:25-jre-noble
