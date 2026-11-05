@@ -57,6 +57,18 @@ username 为 1–32 个字母、数字、点、下划线或连字符，首位为
 | 429 RATE_LIMITED | 本站限流、失败锁定或学校 429 |
 | 503 NJUPT_AUTH_UNAVAILABLE | 学校超时、HTTP 错误、异常响应或身份不一致 |
 
+
+### 2026-11-05：生产入口兼容 HTTP / HTTPS
+
+生产 Nginx 使用前端仓库 deploy/nginx.public.conf：公网同一 TCP :8081 转发至前端容器 :8080，TLS 请求正常处理；明文请求通过 497 的命名 location 保留原方法和请求体，转交仅容器回环监听的 :8082。没有新增公网或宿主端口。
+
+- HTTP GET /api/v1/auth/providers 固定返回 {"local":true,"njupt":false}；HTTPS 返回后端开关，启用时为 {"local":true,"njupt":true}。学校登录只在 HTTPS 登录页显示。
+- HTTP /api/v1/auth/njupt/* 在 Nginx 直接返回 403 HTTPS_REQUIRED，保留统一 error 与 requestId 包络，不将学校凭据转发到后端；伪造 Forwarded / X-Forwarded-Proto 不能绕过。HTTPS 上游转发也清除外来 Forwarded，重写来源头。
+- 后端继续 TQ_COOKIE_SECURE=true。HTTPS 登录保留 Secure / HttpOnly / SameSite=Strict；HTTP 赛事账号通过 Nginx 仅移除名为 tq_session 的 Secure 标志以支持本地赛事账号会话，其余 Cookie 属性保留。学校认证路径在该 HTTP 入口被拒绝，因此不会降级学校登录 Cookie。
+- 浏览器不会向 HTTP 发送 HTTPS 的 Secure 会话；学校账号请始终使用 HTTPS 登录及退出。HTTP 与 HTTPS 的会话行为不可视为可互换。
+- 保留 /entry/、引导脚本与 WebSocket 路由；命名 HTTP 转发和 WebSocket location 均关闭票据 URL 日志。
+- 此规则由生产 Nginx 入口执行，后端端口必须继续仅绑定宿主回环且只接入受信任的内部网络，不能绕过入口暴露到公网。
+
 ### 配置与上线前置条件
 
 默认 TQ_NJUPT_AUTH_ENABLED=false；在可信 HTTPS 与 Secure Cookie 就绪后设置为 true 开启。docker-compose.yml 与 docker-compose.app-only.yml 均显式透传这三个 NJUPT 变量；仅修改 .env 不会更新已有容器，需要仅重建后端 app 服务。TQ_NJUPT_CHECK_KEY 默认 1629428467008（须为 13 位数字）；TQ_NJUPT_APP_ID 默认 common。这是公开协议参数，不是本站密钥或学校密码。
