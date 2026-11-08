@@ -67,7 +67,7 @@ public class UserPrincipal implements UserDetails {
 
     /** 是否管理员。 */
     public boolean isAdmin() {
-        return role == UserRole.ADMIN;
+        return role == UserRole.ADMIN || role == UserRole.SUPER_ADMIN;
     }
 
     @Override

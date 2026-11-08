@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS users (
     id            VARCHAR(40)  NOT NULL,
     username      VARCHAR(64)  NOT NULL,
     password_hash VARCHAR(100) NOT NULL,
-    role          VARCHAR(16)  NOT NULL,
+    role          VARCHAR(16)  NOT NULL COMMENT '管理员/最高管理员/选手角色',
     status        VARCHAR(16)  NOT NULL,
     team_id       VARCHAR(40)  NULL,
     note          VARCHAR(512) NULL,
