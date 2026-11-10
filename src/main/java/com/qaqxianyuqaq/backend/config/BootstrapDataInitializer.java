@@ -54,7 +54,8 @@ public class BootstrapDataInitializer implements ApplicationRunner {
             return;
         }
         // 1. 无管理员账号时创建默认管理员，密码以 BCrypt 存储
-        boolean hasAdmin = userMapper.exists(Wrappers.<User>lambdaQuery().eq(User::getRole, UserRole.ADMIN));
+        boolean hasAdmin = userMapper.exists(Wrappers.<User>lambdaQuery()
+                .in(User::getRole, UserRole.ADMIN, UserRole.SUPER_ADMIN));
         if (!hasAdmin) {
             User admin = new User();
             admin.setId(IdGenerator.next("usr"));

@@ -75,7 +75,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/me/avatar").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/avatars/*/*").authenticated()
                         // 后台接口统一要求管理员角色
-                        .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/v1/admin/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
                         // 其余接口（提交、个人资料、文件下载）要求已登录
                         .anyRequest().authenticated())
                 .exceptionHandling(handling -> handling
