@@ -151,7 +151,10 @@ public class ChallengeContainerServiceImpl implements ChallengeContainerService 
                     null, null, null, null, null, "容器已到期", null, null, 0L);
         }
 
-        // 3. 将数据库状态转换为前端可展示的运行状态
+        // 3. 恢复后端在容器已创建但尚未写入容器标识时留下的启动中实例
+        reconcileStarting(instance, properties.getRuntime());
+
+        // 4. 将数据库状态转换为前端可展示的运行状态
         return toVO(challenge, instance);
     }
 
@@ -331,16 +334,41 @@ public class ChallengeContainerServiceImpl implements ChallengeContainerService 
 
     /** 检查已有 Docker 容器是否仍在运行。 */
     private boolean containerStillRunning(ChallengeContainerInstance instance, RuntimeProperties runtime) {
-        if (blank(instance.getContainerId())) {
-            return false;
-        }
         try {
             DockerCliUtil.ContainerInfo info = DockerCliUtil.inspect(runtime.getDockerBinary(),
-                    instance.getContainerId(), runtime.getNetwork(), instance.getContainerPort(),
+                    blank(instance.getContainerId()) ? instance.getContainerName() : instance.getContainerId(),
+                    runtime.getNetwork(), instance.getContainerPort(),
                     runtime.getCommandTimeout());
             return "running".equalsIgnoreCase(info.state());
         } catch (RuntimeException exception) {
             return false;
+        }
+    }
+
+    /** 恢复已创建容器的状态，避免 Docker 标识写入失败后实例永久停留在启动中。 */
+    private void reconcileStarting(ChallengeContainerInstance instance, RuntimeProperties runtime) {
+        if (instance.getStatus() != ContainerStatus.STARTING) {
+            return;
+        }
+        try {
+            // 1. 使用稳定的容器名称读取实际 Docker 状态，绕过可能损坏的历史容器标识
+            DockerCliUtil.ContainerInfo info = DockerCliUtil.inspect(runtime.getDockerBinary(),
+                    instance.getContainerName(), runtime.getNetwork(), instance.getContainerPort(),
+                    runtime.getCommandTimeout());
+            if (!"running".equalsIgnoreCase(info.state()) || blank(info.containerId())
+                    || !DockerCliUtil.waitForPort(info.containerIp(), instance.getContainerPort(),
+                    runtime.getHealthInterval(), runtime.getHealthInterval())) {
+                return;
+            }
+
+            // 2. 端口可连接后补齐地址并标记就绪，使选手可以通过受控入口访问容器
+            applyContainerInfo(instance, info);
+            instance.setStatus(ContainerStatus.READY);
+            instance.setReadyAt(TimeUtil.now());
+            instance.setUpdatedAt(TimeUtil.now());
+            instanceMapper.updateById(instance);
+        } catch (RuntimeException ignored) {
+            // 容器尚未完成启动时保留 STARTING，下一次状态查询继续恢复
         }
     }
 
@@ -357,6 +385,7 @@ public class ChallengeContainerServiceImpl implements ChallengeContainerService 
 
     /** 将 Docker 检查结果写入实例。 */
     private void applyContainerInfo(ChallengeContainerInstance instance, DockerCliUtil.ContainerInfo info) {
+        instance.setContainerId(info.containerId());
         instance.setContainerIp(info.containerIp());
         instance.setHostIp(info.hostIp());
         instance.setHostPort(info.hostPort());

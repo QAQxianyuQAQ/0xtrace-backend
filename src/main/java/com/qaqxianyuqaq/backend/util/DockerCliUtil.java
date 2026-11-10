@@ -26,7 +26,8 @@ public final class DockerCliUtil {
     }
 
     /** 容器检查结果，仅保留运行时需要的最小字段。 */
-    public record ContainerInfo(String state, String containerIp, String hostIp, Integer hostPort) {
+    public record ContainerInfo(String containerId, String state, String containerIp, String hostIp,
+                                Integer hostPort) {
     }
 
     /** 执行 Docker 命令，超时后强制终止并抛出统一运行时异常。 */
@@ -139,8 +140,16 @@ public final class DockerCliUtil {
                 "-p", "127.0.0.1::" + containerPort,
                 "-e", flagEnvName + "=" + flagValue,
                 image + ":" + tag);
-        return run(dockerBinary, args, timeout).lines().findFirst().orElseThrow(
-                () -> new IllegalStateException("Docker 未返回容器标识"));
+        return parseContainerId(run(dockerBinary, args, timeout));
+    }
+
+    /** 从 Docker 输出中提取完整容器标识，跳过内核告警等非标识文本。 */
+    static String parseContainerId(String output) {
+        return output.lines()
+                .map(String::trim)
+                .filter(line -> line.matches("[0-9a-fA-F]{12,64}"))
+                .reduce((ignored, current) -> current)
+                .orElseThrow(() -> new IllegalStateException("Docker 未返回有效容器标识"));
     }
 
     /** 查询容器状态、内部 IP 和随机宿主端口。 */
@@ -149,6 +158,7 @@ public final class DockerCliUtil {
         String json = run(dockerBinary, List.of("inspect", containerId), timeout);
         try {
             JsonNode root = MAPPER.readTree(json).path(0);
+            String inspectedContainerId = root.path("Id").asText("");
             String state = root.path("State").path("Status").asText("");
             JsonNode networks = root.path("NetworkSettings").path("Networks");
             String containerIp = networks.path(network).path("IPAddress").asText(null);
@@ -157,7 +167,8 @@ public final class DockerCliUtil {
             JsonNode binding = bindings.isArray() && !bindings.isEmpty() ? bindings.path(0) : null;
             String hostIp = binding == null ? null : binding.path("HostIp").asText(null);
             int hostPort = binding == null ? 0 : binding.path("HostPort").asInt(0);
-            return new ContainerInfo(state, containerIp, hostIp, hostPort <= 0 ? null : hostPort);
+            return new ContainerInfo(inspectedContainerId, state, containerIp, hostIp,
+                    hostPort <= 0 ? null : hostPort);
         } catch (Exception exception) {
             throw new IllegalStateException("无法解析 Docker 容器状态", exception);
         }

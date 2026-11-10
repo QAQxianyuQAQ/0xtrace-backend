@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS challenge_container_instances (
     event_id        VARCHAR(40)  NOT NULL,
     challenge_id    VARCHAR(40)  NOT NULL,
     team_id         VARCHAR(40)  NOT NULL,
-    container_id    VARCHAR(80)  NULL,
+    container_id    VARCHAR(128) NULL,
     container_name  VARCHAR(128) NOT NULL,
     status          VARCHAR(16)  NOT NULL,
     docker_image    VARCHAR(255) NOT NULL,

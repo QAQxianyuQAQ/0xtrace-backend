@@ -348,6 +348,7 @@ const response = await fetch("/api/v1/challenges", {
 - 剩余时间不超过 30 分钟时，允许延长 1 小时。
 - 容器过期后由后端定时清理。
 - 前端不要直接使用 `containerIp`、`hostIp` 或 `hostPort` 连接容器，只使用后端签发的 WSS 地址。
+- 后端必须从 Docker CLI 输出中提取合法容器标识，忽略内核告警；历史上已创建但仍为 `STARTING` 且缺少标识的实例，状态查询会按容器名称恢复，端口可连接后转为 `READY`。
 
 容器状态：
 

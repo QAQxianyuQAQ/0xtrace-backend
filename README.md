@@ -36,7 +36,7 @@ java -jar target/backend-1.0.0-SNAPSHOT.jar --spring.profiles.active=prod
 > `mvnw` 与 `scripts/*.sh` 均为 Bash 脚本。若直接执行提示 `权限不够`，改用 `bash` 调用即可：
 > `bash mvnw -DskipTests package`、`bash scripts/scan-secrets.sh`；也可先 `chmod +x mvnw scripts/*.sh .githooks/pre-commit`。
 
-数据库脚本：新库按顺序执行 [`V1__init_schema.sql`](src/main/resources/sql/V1__init_schema.sql)、[`V2__event_scoped_teams.sql`](src/main/resources/sql/V2__event_scoped_teams.sql)、[`V3__challenge_container_runtime.sql`](src/main/resources/sql/V3__challenge_container_runtime.sql) 与 [`V4__container_ttl_and_team_limit.sql`](src/main/resources/sql/V4__container_ttl_and_team_limit.sql)；已有库按顺序补齐尚未执行的迁移。测试环境使用 [`schema-h2.sql`](src/main/resources/sql/schema-h2.sql)（由 `application-test.yml` 自动执行）。
+数据库脚本：新库按顺序执行 [`V1__init_schema.sql`](src/main/resources/sql/V1__init_schema.sql)、[`V2__event_scoped_teams.sql`](src/main/resources/sql/V2__event_scoped_teams.sql)、[`V3__challenge_container_runtime.sql`](src/main/resources/sql/V3__challenge_container_runtime.sql)、[`V4__container_ttl_and_team_limit.sql`](src/main/resources/sql/V4__container_ttl_and_team_limit.sql) 与 [`V5__widen_container_id.sql`](src/main/resources/sql/V5__widen_container_id.sql)；已有库按顺序补齐尚未执行的迁移。测试环境使用 [`schema-h2.sql`](src/main/resources/sql/schema-h2.sql)（由 `application-test.yml` 自动执行）。
 
 dev profile 首次启动（`tracequest.bootstrap.enabled=true`）会创建默认管理员 `admin / admin12345` 与一条状态为 `open` 的赛事记录；生产环境必须关闭该开关（启动期密钥体检会强制拦截）并通过运维流程创建账号。
 
