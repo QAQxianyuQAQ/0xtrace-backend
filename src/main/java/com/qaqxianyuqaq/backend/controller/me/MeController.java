@@ -15,6 +15,13 @@ import jakarta.validation.Valid;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import com.qaqxianyuqaq.backend.aspect.RateLimit;
+import com.qaqxianyuqaq.backend.aspect.AuditAction;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -33,6 +40,15 @@ public class MeController {
     public MeController(ProfileService profileService, SubmissionService submissionService) {
         this.profileService = profileService;
         this.submissionService = submissionService;
+    }
+
+    /** 上传本人头像，管理员与选手共用当前登录身份。 */
+    @PostMapping(value = "/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @RateLimit(scope = "avatar-upload")
+    @AuditAction(value = "profile.avatar.upload", entityType = "user")
+    public ResponseEntity<ProfileVO> uploadAvatar(@AuthenticationPrincipal UserPrincipal principal,
+                                                 @RequestParam("file") MultipartFile file) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(profileService.uploadAvatar(principal, file));
     }
 
     /** 更新昵称与头像地址。 */

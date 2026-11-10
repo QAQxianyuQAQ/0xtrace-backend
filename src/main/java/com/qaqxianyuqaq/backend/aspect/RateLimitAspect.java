@@ -62,6 +62,7 @@ public class RateLimitAspect {
             case "container-start" -> properties.getRateLimit().getContainerStartPerMinute();
             case "container-ticket" -> properties.getRateLimit().getContainerTicketPerMinute();
             case "container-extend" -> properties.getRateLimit().getContainerTicketPerMinute();
+            case "avatar-upload" -> properties.getRateLimit().getAvatarUploadPerMinute();
             default -> DEFAULT_LIMIT;
         };
     }

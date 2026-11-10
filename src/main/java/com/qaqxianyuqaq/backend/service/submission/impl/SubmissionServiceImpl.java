@@ -187,6 +187,10 @@ public class SubmissionServiceImpl implements SubmissionService {
 
         // 6. 分页查询并批量装配题目信息
         IPage<Submission> page = submissionMapper.selectPage(new Page<>(query.page(), query.pageSize()), wrapper);
+        // 当前页为空时保留分页总数，避免空集合批量查询生成非法 SQL。
+        if (page.getRecords().isEmpty()) {
+            return PageUtil.toPage(page, List.of());
+        }
         Map<String, Challenge> challenges = challengeMapper.selectBatchIds(
                         page.getRecords().stream().map(Submission::getChallengeId).distinct().toList())
                 .stream().collect(Collectors.toMap(Challenge::getId, Function.identity()));
@@ -224,7 +228,8 @@ public class SubmissionServiceImpl implements SubmissionService {
         long total = challengeMapper.selectCount(Wrappers.<Challenge>lambdaQuery()
                 .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED)
                 .eq(Challenge::getEventId, event.getId()));
-        Map<String, String> codeById = challengeMapper.selectBatchIds(
+        // 未解题时不发起空集合查询，首次登录也能读取零进度。
+        Map<String, String> codeById = solves.isEmpty() ? Map.of() : challengeMapper.selectBatchIds(
                         solves.stream().map(Solve::getChallengeId).distinct().toList())
                 .stream().collect(Collectors.toMap(Challenge::getId, Challenge::getCode));
         List<String> solvedCodes = solves.stream()

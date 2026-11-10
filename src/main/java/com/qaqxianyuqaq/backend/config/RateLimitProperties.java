@@ -27,4 +27,6 @@ public class RateLimitProperties {
 
     /** 单个账号每分钟允许申请连接票据的次数。 */
     private int containerTicketPerMinute = 30;
+    /** 每个账号每分钟最多上传六次头像，失败请求也计入。 */
+    private int avatarUploadPerMinute = 6;
 }

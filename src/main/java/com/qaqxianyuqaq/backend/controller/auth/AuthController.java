@@ -59,7 +59,24 @@ public class AuthController {
         // 1. 校验账号密码并签发令牌
         AuthSessionVO session = authService.login(request, RequestUtil.clientIp(httpRequest));
 
-        // 2. 令牌写入 HttpOnly Cookie，禁止前端脚本读取
+        return writeSession(session, httpResponse);
+    }
+
+    /** 供登录页判断可用的认证入口，不包含凭据或学校令牌。 */
+    @GetMapping("/providers")
+    public Map<String, Boolean> providers() {
+        return Map.of("local", true, "njupt", properties.getNjupt().isEnabled());
+    }
+
+    /** 学校认证成功后使用同一套本站 Cookie 会话。 */
+    @PostMapping("/njupt/login")
+    public LoginVO loginNjupt(@Valid @RequestBody LoginDTO request, HttpServletRequest httpRequest,
+                              HttpServletResponse httpResponse) {
+        return writeSession(authService.loginNjupt(request, RequestUtil.clientIp(httpRequest)), httpResponse);
+    }
+
+    private LoginVO writeSession(AuthSessionVO session, HttpServletResponse httpResponse) {
+        // 令牌写入 HttpOnly Cookie，禁止前端脚本读取。
         ResponseCookie cookie = ResponseCookie.from(properties.getSecurity().getCookieName(), session.token())
                 .httpOnly(true)
                 .secure(properties.getSecurity().isCookieSecure())

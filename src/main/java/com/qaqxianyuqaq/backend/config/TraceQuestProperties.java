@@ -12,6 +12,9 @@ import org.springframework.boot.context.properties.NestedConfigurationProperty;
 public class TraceQuestProperties {
 
     @NestedConfigurationProperty
+    private final NjuptProperties njupt = new NjuptProperties();
+
+    @NestedConfigurationProperty
     private final JwtProperties jwt = new JwtProperties();
 
     @NestedConfigurationProperty

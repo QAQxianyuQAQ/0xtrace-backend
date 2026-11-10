@@ -199,3 +199,11 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
     PRIMARY KEY (id),
     UNIQUE KEY uk_idempotency_scope_key_user (scope, idempotency_key, user_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '写请求幂等记录表';
+
+-- 南邮身份与本站账号的一对一关联，不保存学校密码、密文或令牌。
+CREATE TABLE IF NOT EXISTS njupt_identities (
+    subject VARCHAR(32) NOT NULL,
+    user_id VARCHAR(40) NOT NULL,
+    PRIMARY KEY (subject),
+    UNIQUE (user_id)
+);
