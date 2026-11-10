@@ -79,8 +79,14 @@ public class DistributedLockAspect {
         String[] parameterNames = parameterNameDiscoverer.getParameterNames(method);
         EvaluationContext context = new StandardEvaluationContext();
         Object[] args = joinPoint.getArgs();
+        for (int index = 0; index < args.length; index++) {
+            // 1. 绑定稳定的索引别名，避免生产编译未保留参数名时无法生成锁键
+            context.setVariable("p" + index, args[index]);
+            context.setVariable("a" + index, args[index]);
+        }
         if (parameterNames != null) {
-            for (int index = 0; index < parameterNames.length; index++) {
+            // 2. 保留参数名别名，兼容现有锁表达式并便于阅读
+            for (int index = 0; index < Math.min(parameterNames.length, args.length); index++) {
                 context.setVariable(parameterNames[index], args[index]);
             }
         }

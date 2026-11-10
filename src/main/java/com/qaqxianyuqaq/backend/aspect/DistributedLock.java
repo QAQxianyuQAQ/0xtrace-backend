@@ -14,7 +14,7 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 public @interface DistributedLock {
 
-    /** SpEL 锁键表达式，例如 #principal.userId() + ':' + #challenge.id。 */
+    /** SpEL 锁键表达式，例如 #p0.userId() + ':' + #p1.id。 */
     String key();
 
     /** 获取锁的最大等待时间（毫秒），超时后按冲突处理。 */

@@ -56,7 +56,7 @@ public class ChallengeContainerServiceImpl implements ChallengeContainerService 
     }
 
     @Override
-    @DistributedLock(key = "'team-instance:' + #team.id")
+    @DistributedLock(key = "'team-instance:' + #p1.id")
     public ChallengeRuntimeVO ensureStarted(Challenge challenge, Team team) {
         // 1. 校验题目启用了 Docker 模式并检查单机运行时配置
         RuntimeProperties runtime = properties.getRuntime();
@@ -192,7 +192,7 @@ public class ChallengeContainerServiceImpl implements ChallengeContainerService 
     }
 
     @Override
-    @DistributedLock(key = "'team-instance-extend:' + #team.id")
+    @DistributedLock(key = "'team-instance-extend:' + #p1.id")
     public ChallengeRuntimeVO extend(Challenge challenge, Team team) {
         // 1. 校验当前队伍确实拥有该题目的就绪容器
         ChallengeContainerInstance instance = requireReady(challenge, team);

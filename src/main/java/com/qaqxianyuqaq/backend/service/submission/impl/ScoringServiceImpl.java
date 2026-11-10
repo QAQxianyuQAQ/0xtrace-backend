@@ -78,7 +78,7 @@ public class ScoringServiceImpl implements ScoringService {
 
     @Override
     @Transactional
-    @DistributedLock(key = "#challenge.id")
+    @DistributedLock(key = "#p1.id")
     public SubmissionResultVO award(UserPrincipal principal, Challenge challenge, SolveSource source,
                                                    String answerText, String requestId, boolean correct) {
         // 1. 解析题目所属赛事并要求选手已经加入该赛事队伍

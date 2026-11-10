@@ -49,7 +49,7 @@ public class TeamServiceImpl implements TeamService {
 
     @Override
     @Transactional
-    @DistributedLock(key = "'team-create:' + #eventId + ':' + #principal.userId()")
+    @DistributedLock(key = "'team-create:' + #p0 + ':' + #p2.userId()")
     public TeamMembershipVO createTeam(String eventId, TeamCreateDTO request, UserPrincipal principal) {
         // 1. 校验选手身份与赛事当前允许组队
         permissionAssert.assertContestant(principal);
@@ -87,7 +87,7 @@ public class TeamServiceImpl implements TeamService {
 
     @Override
     @Transactional
-    @DistributedLock(key = "'team-join:' + #eventId + ':' + #request.code()")
+    @DistributedLock(key = "'team-join:' + #p0 + ':' + #p1.code()")
     public TeamMembershipVO joinTeam(String eventId, TeamJoinDTO request, UserPrincipal principal) {
         // 1. 校验选手身份与赛事当前允许组队
         permissionAssert.assertContestant(principal);
