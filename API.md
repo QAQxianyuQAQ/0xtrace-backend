@@ -11,7 +11,7 @@
 | GET /api/v1/auth/providers | 公开 | 返回 {"local":true,"njupt":false}；njupt 由服务器开关决定 |
 | POST /api/v1/auth/njupt/login | 公开、受登录限流约束 | 接收学号与学校密码，经学校认证成功后签发本站 HttpOnly Cookie |
 | POST /api/v1/auth/login | 公开、受登录限流约束 | 保留原赛事账号和管理员登录；njupt: 前缀的学校身份禁止走本地密码入口 |
-| GET /api/v1/auth/me | 已登录 | 契约保持不变，以本站账号角色和停用状态为准 |
+| GET /api/v1/auth/me | 已登录 | 返回本站账号角色、停用状态和 `isSuperAdmin`；最高管理员仍以兼容值 `role=admin` 返回 |
 
 学校登录 JSON 请求：
 
@@ -36,9 +36,9 @@ username 为 1–32 个字母、数字、点、下划线或连字符，首位为
 
 - 新增 njupt_identities(subject,user_id) 独立关联；subject 为主键，user_id 唯一。
 - 首次学校认证成功后，事务内原子创建 username=njupt:学号 的普通选手及关联，初始 role=CONTESTANT、status=ACTIVE。密码列仅存随机占位密码的 BCrypt hash。
-- 后续按关联复用同一 userId，保留队伍、积分、解题记录与停用状态，不按同名学号接管已有本地账号。
+- 后续按关联复用同一 userId，保留既有角色、队伍、积分、解题记录与停用状态；学校认证不会升级或降级本站角色，也不按同名学号接管已有本地账号。有效学校认证可为该关联的任意本站角色签发会话，接口权限仍完全由本站角色与服务端授权规则决定。
 - 并发首登由唯一约束去重，失败事务整体回滚；冲突且无身份关联时返回 409，不接管预占用户名。
-- 学校身份被重置本地密码后也不能走本地登录；停用账号或已改为管理员角色的关联账号不能走学校入口。
+- 学校身份被重置本地密码后也不能走本地登录；已停用的关联账号不能通过学校认证登录。首次绑定仍只创建普通选手。
 - 学校和本地登录共用按 IP 的 login 配额，密码失败累计到 njupt:学号。验证码、网络故障不计作密码错误；只有认证成功后才建立账号。
 
 ### 错误响应
@@ -49,7 +49,7 @@ username 为 1–32 个字母、数字、点、下划线或连字符，首位为
 |---|---|
 | 400 VALIDATION_ERROR | 学号或密码字段无效 |
 | 401 INVALID_CREDENTIALS | 学校拒绝学号/密码 |
-| 403 FORBIDDEN | 学校入口未启用，或关联角色不允许 |
+| 403 FORBIDDEN | 学校认证入口未启用 |
 | 403 ACCOUNT_DISABLED | 本站账号已停用 |
 | 409 NJUPT_CAPTCHA_REQUIRED | 学校要求滑块；当前未集成 AJ-Captcha，停止登录 |
 | 409 NJUPT_ACCOUNT_ACTION_REQUIRED | 先完成学校账号设置（code 511/512） |
@@ -242,6 +242,7 @@ const response = await fetch("/api/v1/challenges", {
   "userId": "usr_01",
   "username": "field_129",
   "role": "contestant",
+  "isSuperAdmin": false,
   "teamId": "team_01",
   "teamName": "North Signal",
   "nickname": "North",
@@ -250,6 +251,8 @@ const response = await fetch("/api/v1/challenges", {
   "lastLoginAt": "2026-10-28T12:00:00Z"
 }
 ```
+
+普通管理员与最高管理员的 `role` 均为 `admin`；仅最高管理员的 `isSuperAdmin` 为 `true`，用于区分管理操作范围。此字段只提供身份标识，不替代服务端授权。
 
 ### 2.4 修改个人资料
 
@@ -290,7 +293,7 @@ const response = await fetch("/api/v1/challenges", {
   "timezone": "Asia/Shanghai",
   "startsAt": "2026-10-28T01:00:00Z",
   "endsAt": "2026-10-28T10:00:00Z",
-  "maxTeamSize": 4,
+  "maxTeamSize": 3,
   "updatedAt": "2026-10-20T08:00:00Z"
 }
 ```
@@ -316,11 +319,11 @@ const response = await fetch("/api/v1/challenges", {
   "joinCode": "TQ-7K9M2Q4XW8",
   "captain": true,
   "memberCount": 2,
-  "maxMembers": 4
+  "maxMembers": 3
 }
 ```
 
-未加入队伍时返回 `404`。
+未加入队伍时返回 `200` 空响应体（客户端归一为 `null`）。
 
 ### 3.3 创建队伍
 
@@ -351,6 +354,19 @@ const response = await fetch("/api/v1/challenges", {
 成功：`200`。
 
 队伍关系按赛事隔离。同一账号可以在不同赛事加入不同队伍；同一赛事中只能属于一个队伍。
+
+### 3.5 退出当前队伍（2026-11-10）
+
+`DELETE /api/v1/events/{eventId}/teams/me`
+
+- 权限：contestant，仅处理登录者本人，不能指定其他用户或队伍。
+- 成功：`204 No Content`；重复退出仍返回 204。赛事不存在 404，未认证 401，管理员 403。
+- 退出后可创建或加入其他队伍；仍不能加入已结束赛事。原队伍、历史提交、已获积分及运行实例不删除、不转移。
+- 创建者也可退出。`captain` 仍表示该队原创建者身份，不新增队长移交或踢人权限。
+- 所有入队入口（包括管理员分配）均在事务内锁定目标队伍并用当前读统计人数，防止并发超员。
+- 全站硬上限 3 人；赛事可设置更小值（1–3）。旧配置大于 3 按 3 执行，已有超员队伍不自动踢人，只禁止继续入队。
+- 创建/更新赛事的 `maxTeamSize` 超过 3 返回 400 校验错误；容量冲突返回 409。
+- 退出受 `team-write` 限流约束并写入 `team.left` 审计记录。
 
 ## 4. 选手端题目
 
@@ -466,9 +482,12 @@ const response = await fetch("/api/v1/challenges", {
   "lastError": null,
   "readyAt": "2026-10-28T12:10:00Z",
   "expiresAt": "2026-10-28T13:10:00Z",
-  "remainingSeconds": 3600
+  "remainingSeconds": 3600,
+  "entryPath": "/entry/PWN-01/"
 }
 ```
+
+有效 READY 响应的 `entryPath` 由既有同源鉴权网关承接，题号按单段 URL 编码；未就绪、停止、失败、到期或无实例时不返回有效路径。浏览器应解析该路径，而不是从内网 IP 或宿主端口猜网址。
 
 同一队伍已经运行该题容器时，接口会复用并返回原实例。
 
@@ -820,7 +839,7 @@ window.location.assign("/api/v1/files/file_01");
   "timezone": "Asia/Shanghai",
   "startsAt": "2026-11-01T09:00:00+08:00",
   "endsAt": "2026-11-01T18:00:00+08:00",
-  "maxTeamSize": 4
+  "maxTeamSize": 3
 }
 ```
 
@@ -829,7 +848,7 @@ window.location.assign("/api/v1/files/file_01");
 ```json
 {
   "status": "open",
-  "maxTeamSize": 5
+  "maxTeamSize": 3
 }
 ```
 
@@ -1101,7 +1120,32 @@ await fetch(`/api/v1/admin/challenges/WEB-01/attachments`, {
 
 响应绝不包含密码或密码哈希。
 
-### 10.2 后台排行榜
+### 10.2 管理员权限与队伍管理
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| `GET` | `/api/v1/admin/accounts/administrators` | 最高管理员 | 分页查询普通管理员，支持 `q`、`page`、`pageSize` |
+| `PATCH` | `/api/v1/admin/accounts/{userId}/role` | 最高管理员 | 将普通账号设为 `admin` 或撤销为 `contestant` |
+| `GET` | `/api/v1/admin/teams` | 管理员 | 分页查询当前赛事队伍及成员摘要，支持 `q`、`page`、`pageSize` |
+| `PATCH` | `/api/v1/admin/teams/{teamId}` | 管理员 | 修改当前赛事队伍名称 |
+
+角色变更请求：
+
+```json
+{"role":"admin"}
+```
+
+撤销管理员权限时将 `role` 设为 `contestant`。角色变更会递增账号令牌版本，使该账号现有会话立即失效；最高管理员不能通过此接口被降权，操作者也不能修改自己的角色。普通管理员不能查询或变更管理员角色。
+
+队伍改名请求：
+
+```json
+{"name":"North Signal"}
+```
+
+队伍列表和改名仅作用于当前赛事。队伍名在同一赛事内不可重复，目标队伍不属于当前赛事时返回 `404`。
+
+### 10.3 后台排行榜
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -1122,7 +1166,7 @@ await fetch(`/api/v1/admin/challenges/WEB-01/attachments`, {
 
 `delta` 必须非空，正数加分，负数扣分。
 
-### 10.3 后台总览与审计
+### 10.4 后台总览与审计
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -1247,3 +1291,20 @@ remainingSeconds <= 1800
 | 500 | STORAGE_ERROR | MinIO 写入或读取失败 |
 
 错误沿用 {error:{code,message,details},requestId}，上传失败时前端保留裁剪状态并显示服务端错误。昵称保存与文件上传为两次独立请求；若昵称已保存而文件失败，前端明确显示上传失败并允许重试，不声称整个资料操作具有跨请求原子性。
+
+### 2026-11-11 靶机启动可靠性修复
+
+- 启动接口路径和响应结构不变；先落库 PENDING，再进入 PULLING / STARTING / READY，失败保存 FAILED。状态查询不再重复执行启动任务；正常启动窗口内快速返回已保存状态。
+- 优先复用服务器本地题目镜像；只有本地缺失才拉取，远端拉取最多 45 秒。更新同名标签时由管理员预先加载新版镜像；本接口不会强制刷新已有标签。启动命令禁止隐式拉取。
+- 镜像准备失败返回 HTTP 503 / CONTAINER_RUNTIME_ERROR 和可操作的说明，不再返回未处理异常 500；lastError 不包含 Docker 原始输出或注入 Flag。已就绪后才开始一小时计时，重复启动复用同一实例。
+- 本次不变更数据库 schema、共享服务或前端。
+
+### 2026-11-11 靶机浏览器入口字段
+
+- `POST /api/v1/events/{eventId}/challenges/{code}/runtime/instances`、`GET /api/v1/events/{eventId}/challenges/{code}/runtime/instances/me` 及续期响应新增只读可选字段 `entryPath`。例如有效 READY 的 MISSING 实例返回 `"entryPath": "/entry/MISSING/"`。字段采用 URL path-segment 编码，与页面同源解析，不含令牌、Flag 或 Docker 宿主端口。
+- 未就绪、停止、失败、到期或无实例时字段为空；其余已有字段保留。选手沿用现有前端链接进入 /entry/，网关继续以当前会话查验队伍并转发到该队靶机；此路径不是匿名公开入口。
+- 无需重新启动现有 READY 容器；刷新状态即可得到入口。本次不改数据库、网关配置或前端脚本。
+
+## 2026-11-11 版本汇总
+
+上次提交以来的完整变更、比较基线、V6 升级前置条件及验证边界见 [版本变更说明](docs/CHANGELOG_2026-11-11.md)。

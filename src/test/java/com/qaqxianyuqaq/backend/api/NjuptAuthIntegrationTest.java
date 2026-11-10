@@ -9,6 +9,7 @@ import com.qaqxianyuqaq.backend.exception.BusinessException;
 import com.qaqxianyuqaq.backend.exception.ErrorCode;
 import com.qaqxianyuqaq.backend.exception.UnauthorizedException;
 import com.qaqxianyuqaq.backend.repository.user.UserMapper;
+import com.qaqxianyuqaq.backend.repository.user.NjuptIdentityMapper;
 import com.qaqxianyuqaq.backend.security.NjuptAuthenticationClient;
 import com.qaqxianyuqaq.backend.service.auth.impl.NjuptAccountService;
 import jakarta.servlet.http.Cookie;
@@ -41,6 +42,7 @@ class NjuptAuthIntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @Autowired UserMapper users;
+    @Autowired NjuptIdentityMapper identities;
     @Autowired JdbcTemplate jdbc;
     @Autowired PasswordEncoder encoder;
     @Autowired NjuptAccountService accounts;
@@ -80,7 +82,7 @@ class NjuptAuthIntegrationTest {
     }
 
     @Test
-    void shouldRejectDisabledOrElevatedSchoolAccountsAndLocalPasswordBypass() throws Exception {
+    void shouldRejectDisabledSchoolAccountsAndLocalPasswordBypass() throws Exception {
         User user = accounts.resolve("B25BLOCKED");
         user.setPasswordHash(encoder.encode("reset-local-password")); users.updateById(user);
         mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
@@ -88,8 +90,32 @@ class NjuptAuthIntegrationTest {
                 .andExpect(status().isUnauthorized());
         user.setStatus(AccountStatus.DISABLED); users.updateById(user);
         schoolLogin("B25BLOCKED", "synthetic").andExpect(status().isForbidden()).andExpect(jsonPath("$.error.code").value("ACCOUNT_DISABLED"));
-        user.setStatus(AccountStatus.ACTIVE); user.setRole(UserRole.ADMIN); users.updateById(user);
-        schoolLogin("B25BLOCKED", "synthetic").andExpect(status().isForbidden());
+    }
+
+    @Test
+    void shouldPreserveAndAuthorizeAnExistingSuperAdminSchoolIdentity() throws Exception {
+        User superAdmin = new User();
+        superAdmin.setId("njupt-super-admin"); superAdmin.setUsername("njupt:B25041715");
+        superAdmin.setPasswordHash(encoder.encode("unusable-local-password"));
+        superAdmin.setRole(UserRole.SUPER_ADMIN); superAdmin.setStatus(AccountStatus.ACTIVE);
+        superAdmin.setTokenVersion(0); users.insert(superAdmin);
+        identities.insert("B25041715", superAdmin.getId());
+
+        var result = schoolLogin("b25041715", "synthetic-school-password")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value(superAdmin.getId()))
+                .andExpect(jsonPath("$.role").value("admin"))
+                .andReturn();
+
+        var session = result.getResponse().getHeader("Set-Cookie").split(";", 2)[0].split("=", 2);
+        mvc.perform(get("/api/v1/auth/me").cookie(new Cookie(session[0], session[1])))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value(superAdmin.getId()))
+                .andExpect(jsonPath("$.role").value("admin"))
+                .andExpect(jsonPath("$.isSuperAdmin").value(true));
+        assertThat(users.selectById(superAdmin.getId()).getRole()).isEqualTo(UserRole.SUPER_ADMIN);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE username='njupt:B25041715'", Integer.class)).isEqualTo(1);
+        verify(school).authenticate("B25041715", "synthetic-school-password");
     }
 
     @Test

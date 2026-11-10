@@ -35,7 +35,7 @@ class EventControlIntegrationTest {
         String created = mockMvc.perform(post("/api/v1/admin/event").cookie(admin)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("name", "State Control Test", "timezone", "Asia/Shanghai",
-                                "maxTeamSize", 4, "startsAt", "2026-11-01T00:00:00Z", "endsAt", "2026-12-01T00:00:00Z"))))
+                                "maxTeamSize", 3, "startsAt", "2026-11-01T00:00:00Z", "endsAt", "2026-12-01T00:00:00Z"))))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.status").value("setup"))
                 .andReturn().getResponse().getContentAsString();
         JsonNode before = objectMapper.readTree(created);

@@ -53,7 +53,7 @@ public class BootstrapDataInitializer implements ApplicationRunner {
         if (!properties.getBootstrap().isEnabled()) {
             return;
         }
-        // 1. 无管理员账号时创建默认管理员，密码以 BCrypt 存储
+        // 1. 仅在首次引导时创建配置指定的最高管理员，已有账号绝不按用户名提权
         boolean hasAdmin = userMapper.exists(Wrappers.<User>lambdaQuery()
                 .in(User::getRole, UserRole.ADMIN, UserRole.SUPER_ADMIN));
         if (!hasAdmin) {
@@ -61,7 +61,7 @@ public class BootstrapDataInitializer implements ApplicationRunner {
             admin.setId(IdGenerator.next("usr"));
             admin.setUsername(properties.getBootstrap().getAdminUsername());
             admin.setPasswordHash(passwordEncoder.encode(properties.getBootstrap().getAdminPassword()));
-            admin.setRole(UserRole.ADMIN);
+            admin.setRole(UserRole.SUPER_ADMIN);
             admin.setStatus(AccountStatus.ACTIVE);
             admin.setTokenVersion(0);
             admin.setCreatedAt(TimeUtil.now());
@@ -78,7 +78,7 @@ public class BootstrapDataInitializer implements ApplicationRunner {
             event.setTimezone(properties.getBootstrap().getEventTimezone());
             event.setStartsAt(TimeUtil.now());
             event.setEndsAt(TimeUtil.now().plus(DEFAULT_EVENT_DURATION));
-            event.setMaxTeamSize(4);
+            event.setMaxTeamSize(3);
             event.setCreatedAt(TimeUtil.now());
             event.setUpdatedAt(TimeUtil.now());
             eventMapper.insert(event);

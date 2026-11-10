@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
     id            VARCHAR(40)  NOT NULL COMMENT '业务主键，带前缀随机 ID',
     username      VARCHAR(64)  NOT NULL COMMENT '登录用户名',
     password_hash VARCHAR(100) NOT NULL COMMENT 'BCrypt 密码哈希',
-    role          VARCHAR(16)  NOT NULL COMMENT '管理员/最高管理员/选手角色',
+    role          VARCHAR(16)  NOT NULL COMMENT 'SUPER_ADMIN/ADMIN/CONTESTANT',
     status        VARCHAR(16)  NOT NULL COMMENT 'ACTIVE/DISABLED',
     team_id       VARCHAR(40)  NULL COMMENT '所属队伍',
     note          VARCHAR(512) NULL COMMENT '后台备注',

@@ -22,6 +22,7 @@ import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -42,6 +43,82 @@ class TraceQuestApiIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Test
+    @DisplayName("最高管理员管理普通管理员，队伍权限与角色变更会话失效")
+    void shouldManageAdminRolesAndTeamsWithServerSideAuthorization() throws Exception {
+        String superAdmin = login("admin", "admin12345");
+        String suffix = Long.toUnsignedString(System.nanoTime(), 36);
+        String username = "role_target_" + suffix;
+        String teamName = "Managed Team " + suffix;
+        String renamedTeam = "Renamed Team " + suffix;
+        MvcResult created = mockMvc.perform(post("/api/v1/admin/contestants")
+                        .cookie(sessionCookie(superAdmin))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("username", username, "password", "secret123",
+                                "teamName", teamName))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String userId = read(created, "$.id");
+        String superAdminId = read(mockMvc.perform(get("/api/v1/auth/me")
+                        .cookie(sessionCookie(superAdmin)))
+                .andExpect(status().isOk()).andReturn(), "$.userId");
+        String contestantSession = login(username, "secret123");
+
+        mockMvc.perform(get("/api/v1/auth/me").cookie(sessionCookie(contestantSession)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("contestant"))
+                .andExpect(jsonPath("$.isSuperAdmin").value(false));
+        mockMvc.perform(get("/api/v1/admin/accounts/administrators")
+                        .cookie(sessionCookie(contestantSession)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(patch("/api/v1/admin/accounts/" + userId + "/role")
+                        .cookie(sessionCookie(contestantSession))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("role", "admin"))))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(patch("/api/v1/admin/accounts/" + userId + "/role")
+                        .cookie(sessionCookie(superAdmin))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("role", "admin"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("admin"));
+        mockMvc.perform(get("/api/v1/auth/me").cookie(sessionCookie(contestantSession)))
+                .andExpect(status().isUnauthorized());
+
+        String adminSession = login(username, "secret123");
+        mockMvc.perform(get("/api/v1/admin/accounts/administrators")
+                        .cookie(sessionCookie(adminSession)))
+                .andExpect(status().isForbidden());
+        MvcResult teams = mockMvc.perform(get("/api/v1/admin/teams")
+                        .cookie(sessionCookie(adminSession)).param("q", teamName))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].name").value(teamName))
+                .andExpect(jsonPath("$.items[0].memberCount").value(1))
+                .andReturn();
+        String teamId = read(teams, "$.items[0].id");
+        mockMvc.perform(patch("/api/v1/admin/teams/" + teamId)
+                        .cookie(sessionCookie(adminSession))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", renamedTeam))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value(renamedTeam));
+
+        mockMvc.perform(patch("/api/v1/admin/accounts/" + userId + "/role")
+                        .cookie(sessionCookie(superAdmin))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("role", "contestant"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("contestant"));
+        mockMvc.perform(get("/api/v1/admin/teams").cookie(sessionCookie(adminSession)))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(patch("/api/v1/admin/accounts/" + superAdminId + "/role")
+                        .cookie(sessionCookie(superAdmin))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("role", "contestant"))))
+                .andExpect(status().isConflict());
+    }
 
     @Test
     @DisplayName("管理员建题、选手答题、榜单与权限边界的完整流程")
@@ -463,6 +540,61 @@ class TraceQuestApiIntegrationTest {
                         .content(json(payload)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    @Transactional
+    @DisplayName("三人上限、退出再入队和成员隔离")
+    void shouldLeaveAndRejoinWithThreeMemberLimit() throws Exception {
+        String admin = login("admin", "admin12345");
+        String eventId = read(mockMvc.perform(post("/api/v1/admin/event").cookie(sessionCookie(admin))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", "Switch Cup", "maxTeamSize", 3))))
+                .andExpect(status().isCreated()).andReturn(), "$.id");
+        String[] sessions = new String[5];
+        for (int i = 0; i < sessions.length; i++) {
+            createContestant(admin, "switch_player_" + i, null);
+            sessions[i] = login("switch_player_" + i, "secret123");
+        }
+        String base = "/api/v1/events/" + eventId + "/teams";
+        MvcResult first = mockMvc.perform(post(base).cookie(sessionCookie(sessions[0]))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(Map.of("name", "First"))))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.maxMembers").value(3)).andReturn();
+        String code = read(first, "$.joinCode");
+        String originalId = read(first, "$.id");
+        for (int i = 1; i <= 2; i++) {
+            mockMvc.perform(post(base + "/join").cookie(sessionCookie(sessions[i]))
+                            .contentType(MediaType.APPLICATION_JSON).content(json(Map.of("code", code.toLowerCase()))))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.memberCount").value(i + 1));
+        }
+        mockMvc.perform(post(base + "/join").cookie(sessionCookie(sessions[3]))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(Map.of("code", code))))
+                .andExpect(status().isConflict());
+        String otherCode = read(mockMvc.perform(post(base).cookie(sessionCookie(sessions[4]))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(Map.of("name", "Other"))))
+                .andExpect(status().isCreated()).andReturn(), "$.joinCode");
+        for (int i = 0; i < 2; i++) {
+            mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete(base + "/me")
+                            .cookie(sessionCookie(sessions[0]))).andExpect(status().isNoContent());
+        }
+        mockMvc.perform(get(base + "/me").cookie(sessionCookie(sessions[0])))
+                .andExpect(status().isOk()).andExpect(r -> assertThat(r.getResponse().getContentAsString()).isEmpty());
+        mockMvc.perform(post(base + "/join").cookie(sessionCookie(sessions[0]))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(Map.of("code", otherCode))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.memberCount").value(2));
+        mockMvc.perform(get(base + "/me").cookie(sessionCookie(sessions[1])))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(originalId))
+                .andExpect(jsonPath("$.memberCount").value(2));
+        mockMvc.perform(post(base + "/join").cookie(sessionCookie(sessions[3]))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(Map.of("code", code))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.memberCount").value(3));
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete(base + "/me"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete(base + "/me")
+                        .cookie(sessionCookie(admin))).andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/admin/event").cookie(sessionCookie(admin))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(Map.of("name", "Too Big", "maxTeamSize", 4))))
+                .andExpect(status().isBadRequest());
     }
 
     /** 登录并返回会话令牌，测试通过 Cookie 传递身份。 */

@@ -23,6 +23,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -55,6 +57,9 @@ class TeamServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), "test"), TeamMember.class);
         principal = new UserPrincipal("usr_captain", "captain", UserRole.CONTESTANT, null, 0);
         event = new EventConfig();
         event.setId("evt_1");
@@ -91,12 +96,60 @@ class TeamServiceImplTest {
         when(eventMapper.selectById("evt_1")).thenReturn(event);
         when(teamMemberMapper.exists(any(Wrapper.class))).thenReturn(false);
         when(teamMapper.selectOne(any(Wrapper.class))).thenReturn(team);
-        when(teamMemberMapper.selectCount(any(Wrapper.class))).thenReturn(2L);
+        when(teamMemberMapper.selectList(any(Wrapper.class))).thenReturn(List.of(new TeamMember(), new TeamMember()));
 
         assertThatThrownBy(() -> teamService.joinTeam("evt_1",
                 new TeamJoinDTO("TQ-ABCDEFGHIJ"), principal))
                 .isInstanceOf(ConflictException.class)
                 .hasMessageContaining("上限");
+        verify(teamMemberMapper, never()).insert(any(TeamMember.class));
+    }
+    @Test
+    @DisplayName("旧赛事配置超过三人时仍拒绝第四名成员")
+    void shouldCapLegacyTeamAtThree() {
+        event.setMaxTeamSize(100);
+        Team team = new Team();
+        team.setId("team_1");
+        team.setEventId("evt_1");
+        when(eventMapper.selectById("evt_1")).thenReturn(event);
+        when(teamMapper.selectOne(any(Wrapper.class))).thenReturn(team);
+        when(teamMemberMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(new TeamMember(), new TeamMember(), new TeamMember()));
+
+        assertThatThrownBy(() -> teamService.joinTeam("evt_1", new TeamJoinDTO("tq-mixed"), principal))
+                .isInstanceOf(ConflictException.class);
+        verify(teamMemberMapper, never()).insert(any(TeamMember.class));
+    }
+
+    @Test
+    @DisplayName("退出仅删除本人的赛事成员关系并允许重复操作")
+    void shouldLeaveOnlyOwnMembershipIdempotently() {
+        when(eventMapper.selectById("evt_1")).thenReturn(event);
+        teamService.leaveTeam("evt_1", principal);
+        teamService.leaveTeam("evt_1", principal);
+        var query = org.mockito.ArgumentCaptor.forClass(Wrapper.class);
+        verify(teamMemberMapper, org.mockito.Mockito.times(2)).delete(query.capture());
+        assertThat(query.getValue().getSqlSegment()).contains("event_id", "user_id");
+        var params = ((com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?>) query.getValue())
+                .getParamNameValuePairs();
+        assertThat(params.values()).contains("evt_1", "usr_captain");
+        org.mockito.Mockito.verifyNoInteractions(teamMapper);
+    }
+
+    @Test
+    @DisplayName("管理员分配也不能突破三人硬上限")
+    void shouldRejectAdminAssignmentToFullTeam() {
+        event.setMaxTeamSize(4);
+        Team team = new Team();
+        team.setId("team_1");
+        team.setEventId("evt_1");
+        when(eventMapper.selectById("evt_1")).thenReturn(event);
+        when(teamMapper.selectById("team_1")).thenReturn(team);
+        when(teamMapper.selectOne(any(Wrapper.class))).thenReturn(team);
+        when(teamMemberMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(new TeamMember(), new TeamMember(), new TeamMember()));
+        assertThatThrownBy(() -> teamService.attachUser("evt_1", "usr_new", "team_1"))
+                .isInstanceOf(ConflictException.class);
         verify(teamMemberMapper, never()).insert(any(TeamMember.class));
     }
 }

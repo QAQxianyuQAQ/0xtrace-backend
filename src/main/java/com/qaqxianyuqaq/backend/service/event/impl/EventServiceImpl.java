@@ -100,8 +100,8 @@ public class EventServiceImpl implements EventService {
         if (request.name() == null || request.name().isBlank()) {
             throw new ValidationFailedException("name", "赛事名称不能为空");
         }
-        if (request.maxTeamSize() == null || request.maxTeamSize() < 1 || request.maxTeamSize() > 100) {
-            throw new ValidationFailedException("maxTeamSize", "队伍人数上限需为 1-100");
+        if (request.maxTeamSize() == null || request.maxTeamSize() < 1 || request.maxTeamSize() > 3) {
+            throw new ValidationFailedException("maxTeamSize", "队伍人数上限需为 1-3");
         }
 
         // 2. 校验时区与起止时间，避免创建不可用赛事
@@ -153,6 +153,9 @@ public class EventServiceImpl implements EventService {
 
         // 4. 校验新的人数上限不会低于赛事内任何现有队伍人数
         if (request.maxTeamSize() != null) {
+            if (request.maxTeamSize() < 1 || request.maxTeamSize() > 3) {
+                throw new ValidationFailedException("maxTeamSize", "队伍人数上限需为 1-3");
+            }
             validateReducedTeamCapacity(event.getId(), request.maxTeamSize());
             event.setMaxTeamSize(request.maxTeamSize());
         }
@@ -225,7 +228,8 @@ public class EventServiceImpl implements EventService {
     /** 实体转响应模型。 */
     private EventVO toVO(EventConfig event) {
         return new EventVO(event.getId(), event.getName(), event.getStatus().apiValue(),
-                event.getTimezone(), event.getStartsAt(), event.getEndsAt(), event.getMaxTeamSize(),
+                event.getTimezone(), event.getStartsAt(), event.getEndsAt(),
+                event.getMaxTeamSize() == null ? 3 : Math.min(3, event.getMaxTeamSize()),
                 event.getUpdatedAt());
     }
 }

@@ -16,6 +16,6 @@ public record UpdateEventDTO(
         LocalDateTime startsAt,
         LocalDateTime endsAt,
         @Min(value = 1, message = "队伍人数上限至少为 1")
-        @Max(value = 100, message = "队伍人数上限不能超过 100")
+        @Max(value = 3, message = "队伍人数上限不能超过 3")
         Integer maxTeamSize) {
 }

@@ -51,7 +51,7 @@ class SuperAdminAuthenticationIntegrationTest {
     @DisplayName("最高管理员可登录、恢复会话并访问后台，接口角色保持兼容")
     void shouldAuthenticateSuperAdminAndAllowAdminRoutes() throws Exception {
         String username = "super_admin_" + IdGenerator.randomToken(12);
-        String password = "test-super-admin-password";
+        String password = IdGenerator.randomToken(24);
         User user = new User();
         user.setId(IdGenerator.next("usr"));
         user.setUsername(username);
@@ -73,7 +73,8 @@ class SuperAdminAuthenticationIntegrationTest {
 
         mockMvc.perform(get("/api/v1/auth/me").cookie(sessionCookie))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.role").value("admin"));
+                .andExpect(jsonPath("$.role").value("admin"))
+                .andExpect(jsonPath("$.isSuperAdmin").value(true));
         mockMvc.perform(get("/api/v1/admin/dashboard").cookie(sessionCookie))
                 .andExpect(status().isOk());
     }

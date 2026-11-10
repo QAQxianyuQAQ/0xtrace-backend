@@ -70,9 +70,16 @@ public class UserPrincipal implements UserDetails {
         return role == UserRole.ADMIN || role == UserRole.SUPER_ADMIN;
     }
 
+    /** 是否最高管理员。 */
+    public boolean isSuperAdmin() {
+        return role == UserRole.SUPER_ADMIN;
+    }
+
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));
+        return role == UserRole.SUPER_ADMIN
+                ? List.of(new SimpleGrantedAuthority("ROLE_SUPER_ADMIN"), new SimpleGrantedAuthority("ROLE_ADMIN"))
+                : List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));
     }
 
     @Override

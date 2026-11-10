@@ -11,7 +11,9 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -50,6 +52,18 @@ public class EventTeamController {
             @Valid @RequestBody TeamJoinDTO request,
             @AuthenticationPrincipal UserPrincipal principal) {
         return teamService.joinTeam(eventId, request, principal);
+    }
+
+    /** 退出本人在该赛事中的队伍，保留队伍与历史数据。 */
+    @DeleteMapping("/me")
+    @PreAuthorize("hasRole('CONTESTANT')")
+    @RateLimit(scope = "team-write")
+    @AuditAction(value = "team.left", entityType = "team")
+    public ResponseEntity<Void> leave(
+            @PathVariable String eventId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        teamService.leaveTeam(eventId, principal);
+        return ResponseEntity.noContent().build();
     }
 
     /** 查看当前选手在该赛事的队伍。 */

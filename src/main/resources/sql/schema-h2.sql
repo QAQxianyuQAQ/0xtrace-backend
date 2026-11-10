@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS events (
     timezone   VARCHAR(64)  NOT NULL,
     starts_at  TIMESTAMP(3) NULL,
     ends_at    TIMESTAMP(3) NULL,
-    max_team_size INT        NOT NULL DEFAULT 4,
+    max_team_size INT        NOT NULL DEFAULT 3,
     created_at TIMESTAMP(3) NULL,
     updated_at TIMESTAMP(3) NULL,
     PRIMARY KEY (id)
@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS challenge_container_instances (
     container_ip    VARCHAR(64)  NULL,
     host_ip         VARCHAR(64)  NULL,
     host_port       INT          NULL,
-    container_port  INT          NOT NULL,
+    container_port  INT          NULL,
     last_error      VARCHAR(512) NULL,
     ready_at        TIMESTAMP(3) NULL,
     expires_at      TIMESTAMP(3) NULL,

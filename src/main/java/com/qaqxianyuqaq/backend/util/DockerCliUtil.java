@@ -2,6 +2,8 @@ package com.qaqxianyuqaq.backend.util;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qaqxianyuqaq.backend.exception.ContainerRuntimeException;
+import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayOutputStream;
 import java.net.InetSocketAddress;
@@ -79,9 +81,22 @@ public final class DockerCliUtil {
         }
     }
 
-    /** 拉取指定镜像和标签。 */
+    /** 优先复用管理员已加载的镜像，缺失时才限时拉取，避免内网每次启动访问仓库。 */
     public static void pull(String dockerBinary, String image, String tag, Duration timeout) {
-        run(dockerBinary, List.of("pull", image + ":" + tag), timeout);
+        String reference = image + ":" + tag;
+        try {
+            run(dockerBinary, List.of("image", "inspect", "--format", "{{.Id}}", reference), timeout);
+            return;
+        } catch (IllegalStateException ignored) {
+            // 本地镜像不存在时才访问仓库；镜像更新由管理员预先拉取或离线加载。
+        }
+        try {
+            run(dockerBinary, List.of("pull", reference),
+                    timeout.compareTo(Duration.ofSeconds(45)) > 0 ? Duration.ofSeconds(45) : timeout);
+        } catch (IllegalStateException exception) {
+            LoggerFactory.getLogger(DockerCliUtil.class).warn("题目镜像准备失败, image={}", reference, exception);
+            throw new ContainerRuntimeException("题目镜像不可用，请联系管理员预加载镜像或检查镜像仓库连接");
+        }
     }
 
     /** 读取镜像声明的第一个 TCP 监听端口，避免让管理端手工填写容器端口。 */
@@ -126,7 +141,7 @@ public final class DockerCliUtil {
                                         String memoryLimit, String cpuLimit, long pidsLimit,
                                         Duration timeout) {
         List<String> args = List.of(
-                "run", "-d",
+                "run", "-d", "--pull=never",
                 "--name", containerName,
                 "--label", "tracequest.managed=true",
                 "--label", "tracequest.challenge=" + challengeId,

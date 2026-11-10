@@ -23,6 +23,16 @@ public class PermissionAssert {
         }
     }
 
+    /** 断言当前主体为最高管理员。 */
+    public void assertSuperAdmin(UserPrincipal principal) {
+        if (principal == null) {
+            throw new UnauthorizedException("未登录或登录已过期");
+        }
+        if (!principal.isSuperAdmin()) {
+            throw new ForbiddenException("该操作仅限最高管理员");
+        }
+    }
+
     /** 断言当前主体为已登录选手（管理员亦可作答，用于联调）。 */
     public void assertContestant(UserPrincipal principal) {
         if (principal == null) {

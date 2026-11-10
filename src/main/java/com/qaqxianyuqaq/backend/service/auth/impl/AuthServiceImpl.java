@@ -150,11 +150,10 @@ public class AuthServiceImpl implements AuthService {
         }
         User user = njuptAccounts.resolve(subject);
 
-        // 4. 停用账号和管理员身份禁止通过学校入口登录。
+        // 4. 学校认证只证明身份；本站角色继续由已绑定账号决定。
         if (user.getStatus() != AccountStatus.ACTIVE) {
             throw new ForbiddenException(ErrorCode.ACCOUNT_DISABLED, "账号已停用，请联系赛事管理员");
         }
-        if (user.getRole() != UserRole.CONTESTANT) throw new ForbiddenException("学校登录仅供普通选手使用");
 
         // 5. 丢弃学校令牌，只签发沿用现有权限规则的本站会话。
         rateLimitService.clearLoginFailure(clientIp, key);
@@ -192,6 +191,7 @@ public class AuthServiceImpl implements AuthService {
         // 2. 补齐当前赛事的队伍与展示字段
         Team team = resolveCurrentTeam(user);
         return new MeVO(user.getId(), user.getUsername(), user.getRole().apiValue(),
+                user.getRole() == UserRole.SUPER_ADMIN,
                 team == null ? null : team.getId(), team == null ? null : team.getName(),
                 user.getNickname(), user.getAvatarUrl(),
                 user.getStatus().apiValue(), user.getLastLoginAt());
