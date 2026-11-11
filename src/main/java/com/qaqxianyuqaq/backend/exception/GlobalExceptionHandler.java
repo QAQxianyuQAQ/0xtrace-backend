@@ -14,6 +14,8 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -98,6 +100,20 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(ErrorCode.PAYLOAD_TOO_LARGE.status())
                 .body(ErrorVO.of(ErrorCode.PAYLOAD_TOO_LARGE.code(), "文件体积超过服务端限制",
                         RequestUtil.currentRequestId()));
+    }
+
+    /** 未注册的方法保留框架 Allow 头并返回 405，避免被兜底误判为服务器故障。 */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorVO> handleMethod(HttpRequestMethodNotSupportedException exception) {
+        return ResponseEntity.status(ErrorCode.METHOD_NOT_ALLOWED.status()).headers(exception.getHeaders())
+                .body(ErrorVO.of(ErrorCode.METHOD_NOT_ALLOWED.code(), "请求方法不受支持",
+                        RequestUtil.currentRequestId()));
+    }
+
+    /** 查询或路径参数类型错误属于客户端输入错误。 */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorVO> handleArgumentType(MethodArgumentTypeMismatchException exception) {
+        return badRequest(List.of(new FieldErrorVO(exception.getName(), "参数类型错误")));
     }
 
     /** 处理鉴权失败。 */

@@ -68,6 +68,30 @@ class DockerCliUtilTest {
         assertThat(Files.readString(directory.resolve("commands"))).contains("--pull=never");
     }
 
+    @Test
+    @DisplayName("删除失败且容器仍存在时必须报错，禁止把失败当作成功")
+    void shouldRejectRemovalFailureForExistingContainer() throws Exception {
+        Path docker = script("if [ \"$1\" = container ]; then echo tq-existing; exit 0; fi\nexit 1");
+        assertThatThrownBy(() -> DockerCliUtil.removeQuietly(docker.toString(), "tq-existing", Duration.ofSeconds(1)))
+                .isInstanceOf(ContainerRuntimeException.class).hasMessageContaining("原实例已保留");
+    }
+
+    @Test
+    @DisplayName("删除失败且 Docker 不可用时禁止假定容器已经不存在")
+    void shouldRejectRemovalWhenAbsenceCannotBeConfirmed() throws Exception {
+        Path docker = script("echo 'private daemon failure'; exit 1");
+        assertThatThrownBy(() -> DockerCliUtil.removeQuietly(docker.toString(), "tq-existing", Duration.ofSeconds(1)))
+                .isInstanceOf(ContainerRuntimeException.class).hasMessageNotContaining("private daemon");
+    }
+
+    @Test
+    @DisplayName("仅在只读查询确认目标不存在时允许忽略删除错误")
+    void shouldAllowRemovalOfConfirmedMissingContainer() throws Exception {
+        Path docker = script("if [ \"$1\" = container ]; then echo tq-other; exit 0; fi\nexit 1");
+        DockerCliUtil.removeQuietly(docker.toString(), "tq-missing", Duration.ofSeconds(1));
+        assertThat(Files.readString(directory.resolve("commands"))).contains("container ls");
+    }
+
     private Path script(String body) throws Exception {
         Path file = directory.resolve("docker");
         Files.writeString(file, "#!/bin/sh\necho \"$*\" >> '" + directory.resolve("commands") + "'\n" + body + "\n");

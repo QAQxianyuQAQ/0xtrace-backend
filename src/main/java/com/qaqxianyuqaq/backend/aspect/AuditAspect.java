@@ -5,7 +5,7 @@ import com.qaqxianyuqaq.backend.domain.dto.audit.AuditCommandDTO;
 import com.qaqxianyuqaq.backend.security.UserPrincipal;
 import com.qaqxianyuqaq.backend.security.SecurityUtils;
 import com.qaqxianyuqaq.backend.service.audit.AuditService;
-import com.qaqxianyuqaq.backend.util.JsonUtil;
+import com.qaqxianyuqaq.backend.util.AuditSnapshotUtil;
 import com.qaqxianyuqaq.backend.util.RequestUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -55,9 +55,9 @@ public class AuditAspect {
                     principal == null ? null : principal.getUsername(),
                     auditAction.value(),
                     auditAction.entityType(),
-                    resolveEntityId(joinPoint, auditAction, result),
+                    resolveEntityId(joinPoint, auditAction, AuditSnapshotUtil.body(result)),
                     null,
-                    JsonUtil.toJson(result),
+                    AuditSnapshotUtil.snapshot(result),
                     RequestUtil.currentRequestId(),
                     RequestUtil.clientIp(request)));
         } catch (RuntimeException exception) {

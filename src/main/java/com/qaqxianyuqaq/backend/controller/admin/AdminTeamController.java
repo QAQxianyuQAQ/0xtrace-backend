@@ -1,6 +1,5 @@
 package com.qaqxianyuqaq.backend.controller.admin;
 
-import com.qaqxianyuqaq.backend.aspect.AuditAction;
 import com.qaqxianyuqaq.backend.aspect.RateLimit;
 import com.qaqxianyuqaq.backend.domain.dto.admin.ManagedTeamRenameDTO;
 import com.qaqxianyuqaq.backend.domain.dto.common.PageQueryDTO;
@@ -45,7 +44,6 @@ public class AdminTeamController {
     /** 修改当前赛事指定队伍名称。 */
     @PatchMapping("/{teamId}")
     @RateLimit(scope = "admin-write")
-    @AuditAction(value = "team.renamed", entityType = "team", entityIdParam = "teamId")
     public TeamBriefVO rename(@PathVariable String teamId,
                               @Valid @RequestBody ManagedTeamRenameDTO request,
                               @AuthenticationPrincipal UserPrincipal principal) {

@@ -125,13 +125,26 @@ public final class DockerCliUtil {
         }
     }
 
-    /** 删除同名遗留容器，避免名称冲突。 */
+    /** 仅在只读查询确认容器不存在时忽略删除错误，避免丢失仍在运行的实例记录。 */
     public static void removeQuietly(String dockerBinary, String containerName, Duration timeout) {
         try {
             run(dockerBinary, List.of("rm", "-f", containerName), timeout);
-        } catch (IllegalStateException ignored) {
-            // 容器不存在属于正常清理路径
+        } catch (IllegalStateException exception) {
+            try {
+                if (!containerExists(dockerBinary, containerName, timeout)) {
+                    return;
+                }
+            } catch (IllegalStateException ignored) {
+                // 无法确认删除结果时保留原记录，不把 Docker 故障当作容器不存在。
+            }
+            throw new ContainerRuntimeException("容器删除尚未确认，原实例已保留，请稍后重试");
         }
+    }
+
+    /** 按完整名称确认容器是否存在，避免名称前缀匹配误认其他队伍。 */
+    public static boolean containerExists(String dockerBinary, String containerName, Duration timeout) {
+        return run(dockerBinary, List.of("container", "ls", "--all", "--format", "{{.Names}}",
+                "--filter", "name=" + containerName), timeout).lines().anyMatch(containerName::equals);
     }
 
     /** 启动容器并返回容器标识；宿主端口只绑定回环地址并随机分配。 */

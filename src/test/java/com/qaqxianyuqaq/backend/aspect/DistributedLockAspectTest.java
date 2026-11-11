@@ -101,7 +101,7 @@ class DistributedLockAspectTest {
                 Arguments.of(TeamServiceImpl.class.getMethod("joinTeam", String.class, TeamJoinDTO.class, UserPrincipal.class),
                         new Object[]{"event_1", new TeamJoinDTO("ABCDEF"), principal}, "team-join:event_1:ABCDEF"),
                 Arguments.of(ScoringServiceImpl.class.getMethod("award", UserPrincipal.class, Challenge.class,
-                                SolveSource.class, String.class, String.class, boolean.class),
-                        new Object[]{principal, challenge, SolveSource.ANSWER, "answer", "req_1", true}, "challenge_1"));
+                                SolveSource.class, String.class, String.class, boolean.class, Team.class),
+                        new Object[]{principal, challenge, SolveSource.ANSWER, "answer", "req_1", true, team}, "challenge_1"));
     }
 }

@@ -5,6 +5,9 @@ import com.qaqxianyuqaq.backend.domain.vo.submission.SubmissionResultVO;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.qaqxianyuqaq.backend.aspect.DistributedLock;
+import com.qaqxianyuqaq.backend.aspect.Idempotent;
+import com.qaqxianyuqaq.backend.exception.ConflictException;
+import com.qaqxianyuqaq.backend.exception.ErrorCode;
 import com.qaqxianyuqaq.backend.domain.entity.Challenge;
 import com.qaqxianyuqaq.backend.domain.entity.Solve;
 import com.qaqxianyuqaq.backend.domain.entity.Submission;
@@ -79,16 +82,20 @@ public class ScoringServiceImpl implements ScoringService {
     @Override
     @Transactional
     @DistributedLock(key = "#p1.id")
+    @Idempotent(scope = "validated-scoring-v1")
     public SubmissionResultVO award(UserPrincipal principal, Challenge challenge, SolveSource source,
-                                                   String answerText, String requestId, boolean correct) {
-        // 1. 解析题目所属赛事并要求选手已经加入该赛事队伍
+                                                   String answerText, String requestId, boolean correct, Team team) {
+        // 1. 使用入口每次重新校验的队伍，幂等回放只能发生在当前凭证通过之后
         String eventId = eventIdOf(challenge);
-        Team team = teamService.requireMembership(eventId, principal.userId());
         String subjectKey = team.getId();
+        SubmissionResultVO replayed = replayByRequestId(requestId, answerText, principal, challenge, team, source, correct);
+        if (replayed != null) {
+            return replayed;
+        }
 
-        // 2. 已完成题目直接返回首次完成数据，不重复计分、不新增解题记录
+        // 2. 仅重复正确提交返回首次完成数据，错误尝试仍按本次判题留存且不改原成绩
         Solve existing = findSolve(subjectKey, challenge.getId());
-        if (existing != null) {
+        if (existing != null && correct) {
             return alreadySolvedResponse(challenge, existing, eventId, team.getId());
         }
 
@@ -147,6 +154,42 @@ public class ScoringServiceImpl implements ScoringService {
                 SubmissionResult.CORRECT.apiValue(), CompletionType.FIRST_SOLVE.apiValue(), solve.getSolvedAt(),
                 basePoints, bonusPoints, basePoints + bonusPoints, place, progress(eventId, team.getId()),
                 source.apiValue());
+    }
+
+    /** 当前凭证校验通过后，按请求编号回放同队同题同内容的既有提交。 */
+    private SubmissionResultVO replayByRequestId(String requestId, String answerText, UserPrincipal principal,
+                                                Challenge challenge, Team team, SolveSource source, boolean correct) {
+        // 1. 未提供请求编号时按首次请求处理
+        if (requestId == null || requestId.isBlank()) {
+            return null;
+        }
+        // 2. 只读取当前账号的既有提交，防止跨账号回放
+        Submission existing = submissionMapper.selectOne(Wrappers.<Submission>lambdaQuery()
+                .eq(Submission::getRequestId, requestId)
+                .eq(Submission::getUserId, principal.userId())
+                .orderByDesc(Submission::getSubmittedAt)
+                .last("LIMIT 1"));
+        if (existing == null) {
+            return null;
+        }
+        // 3. 请求编号绑定原队伍、题目、凭证与结果，规则变化时要求使用新编号
+        if (!challenge.getId().equals(existing.getChallengeId())
+                || !team.getId().equals(existing.getTeamId())
+                || source != existing.getSource()
+                || !DigestUtil.sha256Hex(answerText).equals(existing.getAnswerDigest())
+                || correct != (existing.getResult() == SubmissionResult.CORRECT)) {
+            throw new ConflictException(ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "请求编号已用于其他题目、队伍、内容或判题结果，请更换 requestId");
+        }
+        // 4. 正确重试沿用首次解题，错误重试保持零分且不新增提交
+        if (correct) {
+            Solve solve = findSolve(team.getId(), challenge.getId());
+            if (solve != null) {
+                return alreadySolvedResponse(challenge, solve, eventIdOf(challenge), team.getId());
+            }
+        }
+        return new SubmissionResultVO(existing.getId(), challenge.getCode(), existing.getResult().apiValue(),
+                null, null, 0, 0, 0, null, progress(eventIdOf(challenge), team.getId()), source.apiValue());
     }
 
     /** 按名次计算额外加分。 */

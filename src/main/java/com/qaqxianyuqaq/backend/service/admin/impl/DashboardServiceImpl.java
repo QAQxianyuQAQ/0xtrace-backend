@@ -1,6 +1,9 @@
 package com.qaqxianyuqaq.backend.service.admin.impl;
 
 import com.qaqxianyuqaq.backend.domain.vo.admin.ActivityVO;
+import com.qaqxianyuqaq.backend.domain.dto.admin.AuditLogQueryDTO;
+import com.qaqxianyuqaq.backend.security.PermissionAssert;
+import com.qaqxianyuqaq.backend.security.UserPrincipal;
 import com.qaqxianyuqaq.backend.domain.vo.admin.DashboardVO;
 import com.qaqxianyuqaq.backend.domain.vo.admin.MetricsVO;
 
@@ -41,19 +44,24 @@ public class DashboardServiceImpl implements DashboardService {
 
     private final EventService eventService;
 
+    private final PermissionAssert permissionAssert;
+
     public DashboardServiceImpl(ChallengeMapper challengeMapper, UserMapper userMapper, SolveMapper solveMapper,
                                 SubmissionMapper submissionMapper, AuditService auditService,
-                                EventService eventService) {
+                                EventService eventService, PermissionAssert permissionAssert) {
         this.challengeMapper = challengeMapper;
         this.userMapper = userMapper;
         this.solveMapper = solveMapper;
         this.submissionMapper = submissionMapper;
         this.auditService = auditService;
         this.eventService = eventService;
+        this.permissionAssert = permissionAssert;
     }
 
     @Override
-    public DashboardVO dashboard() {
+    public DashboardVO dashboard(UserPrincipal principal) {
+        // 1. 服务层也验证管理权限，不通过总览旁路泄露完整审计
+        permissionAssert.assertAdmin(principal);
         // 1. 统计题目数量与上线题目数量
         int challengeCount = Math.toIntExact(challengeMapper.selectCount(null));
         int publishedCount = Math.toIntExact(challengeMapper.selectCount(Wrappers.<Challenge>lambdaQuery()
@@ -71,12 +79,13 @@ public class DashboardServiceImpl implements DashboardService {
         int submissionCount = Math.toIntExact(submissionMapper.selectCount(null));
 
         // 4. 读取近期活动摘要（审计日志最近 10 条）
-        List<ActivityVO> activities = auditService
-                .page(null, null, null, PageUtil.normalize(1, RECENT_ACTIVITY_LIMIT))
+        List<ActivityVO> activities = principal.isSuperAdmin() ? auditService
+                .page(new AuditLogQueryDTO(null, null, null, null, null, null, null, null),
+                        PageUtil.normalize(1, RECENT_ACTIVITY_LIMIT), principal)
                 .items().stream()
                 .map(log -> new ActivityVO(log.id(), log.actor(), log.action(), log.entityType(),
                         log.entityId(), log.createdAt()))
-                .toList();
+                .toList() : List.of();
 
         // 5. 组装总览响应
         MetricsVO metrics = new MetricsVO(challengeCount, publishedCount, contestantCount,

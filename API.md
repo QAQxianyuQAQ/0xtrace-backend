@@ -1,3 +1,5 @@
+> 当前稳定契约：2026-11-11 runtime-safety 后端 / security-hardening 前端与网关，见 [版本说明](docs/STABLE_RELEASE_2026-11-11.md)。本文按日期追加，末尾同日安全/判题/实例保留规则优先于旧版段落；“本地候选”是历史记录。
+
 # TraceQuest 前端 API 文档
 
 ## 2026-11-05：南邮统一身份认证登录（本次新增）
@@ -157,6 +159,7 @@ const response = await fetch("/api/v1/challenges", {
 | 401 | 未登录或 Cookie 已失效 |
 | 403 | 权限不足、来源校验失败、非本队 Flag |
 | 404 | 资源不存在或不可见 |
+| 405 | 不支持该 HTTP 方法，响应包含 Allow |
 | 409 | 状态冲突、重复操作、容器未就绪或同一队伍已有容器 |
 | 422 | 不支持的文件类型或业务规则失败 |
 | 429 | 请求触发限流 |
@@ -283,7 +286,7 @@ const response = await fetch("/api/v1/challenges", {
 
 `GET /api/v1/event`
 
-权限：public
+权限：authenticated（必须登录）
 
 ```json
 {
@@ -374,7 +377,7 @@ const response = await fetch("/api/v1/challenges", {
 
 `GET /api/v1/challenges`
 
-权限：public / contestant
+权限：authenticated（必须登录）
 
 查询参数：
 
@@ -432,7 +435,7 @@ const response = await fetch("/api/v1/challenges", {
 
 `GET /api/v1/challenges/{code}`
 
-权限：public / contestant
+权限：authenticated（必须登录）
 
 响应字段与列表项相同。
 
@@ -754,11 +757,11 @@ Idempotency-Key: <uuid>
 }
 ```
 
-### 7.5 公开排行榜
+### 7.5 参赛排行榜
 
 `GET /api/v1/leaderboard?eventId={eventId}&scope=team&page=1&pageSize=50`
 
-权限：public / contestant
+权限：authenticated（必须登录）
 
 当前只支持 `scope=team`。
 
@@ -1173,7 +1176,7 @@ await fetch(`/api/v1/admin/challenges/WEB-01/attachments`, {
 | `GET` | `/api/v1/admin/dashboard` | 赛事、题目、账号、提交与近期活动 |
 | `GET` | `/api/v1/admin/audit-log` | 分页审计日志 |
 
-审计查询参数：`action`、`entityType`、`actor`、`page`、`pageSize`。
+完整审计仅最高管理员可查；筛选、敏感摘要处理及本地候选发布边界见文末“管理后台信息增强”。
 
 ## 11. 重要前端行为
 
@@ -1308,3 +1311,87 @@ remainingSeconds <= 1800
 ## 2026-11-11 版本汇总
 
 上次提交以来的完整变更、比较基线、V6 升级前置条件及验证边界见 [版本变更说明](docs/CHANGELOG_2026-11-11.md)。
+
+
+### 2026-11-11 稳定化候选：来源、重试和计分事务（尚未上线）
+
+基线为后端 release/deployed-version-20261111 的 24c5187；接口仍为 /api/v1，无新增路由、字段或数据库迁移。以下描述仅适用于本轮候选，生产仍保留基线。
+
+- HTTP 写请求和 /api/v1/challenge-connections WebSocket 握手统一校验 Origin 的协议、主机、有效端口；省略默认 :80/:443 视为相同端口。同主机但不同协议或端口仍为跨源，返回 403 ORIGIN_REJECTED（HTTP）或 403 握手拒绝（WebSocket），不提前消费票据。畸形 Origin、用户信息、路径、查询和片段一律拒绝。仅完整 Origin 的既有显式白名单可放行额外来源，不接受主机名通配。
+- 来源比较使用框架还原后的完整请求 URL，不混用原始内部 Host 与转发后的协议。代理必须保留可信 Host，并覆盖来自客户端的 Forwarded / X-Forwarded-*；不通过关闭同源校验修复代理错误。浏览器自动附带 Origin，非浏览器 WebSocket 验收客户端也必须附带正确 Origin。
+- 答案提交 JSON requestId 在当前账号内绑定原题目及答案摘要；重用相同 requestId 换答案或换题目返回 409 IDEMPOTENCY_CONFLICT，不借用另一条提交的结果。客户端改变题目或答案时必须生成新的 requestId。
+- 答案与二维码提交沿用分布式锁，在当前账号内串行完成幂等查验、业务和响应快照；再由原有题目锁序列化奖励位次。等待账号锁超过既有 3 秒上限时返回 409 CONFLICT，可稍后重试；不会先计分再返回键冲突。锁仍使用既有 10 秒租期，不声称支持任意长数据库停顿。
+- Idempotency-Key 沿用账号与作用域隔离及内容摘要匹配；并发插入同一快照发生唯一键竞争时，返回已提交的首个快照。内容不同仍为 409；无关主键冲突或其他存储错误不吞掉。
+- 答案和二维码校验不提前开启包含等待锁过程的数据库事务；提交记录、有效解题、基础分和奖励分仍在同一个 award 事务中写入，并在释放题目锁前提交。原始解题时间和奖励规则不变；同队重复正确提交不重复加分。
+- 二维码撤销后核验沿用 400 VALIDATION_ERROR，并非 422；二维码 PNG 渲染和摄像头扫描契约未改。
+- 本轮不恢复此前撤回的治理功能或五人上限代码；不批量修改正式成绩、账号角色或队伍成员。前端仅同步契约文档，不改 UI 或构建资源。
+
+### 管理后台信息增强（2026-11-11，本地候选）
+
+**权限**：继续使用服务端已验证的账号角色与 JWT 会话。普通管理员/超管可查看队伍和本节判题记录；完整操作审计仅 SUPER_ADMIN。普通选手直接调用管理接口返回 403，未登录返回 401。普通管理员不自动升为超管，本轮不新增或改动 NJUPT 身份绑定、权限分配规则、按赛事授权模型。
+
+#### GET /api/v1/admin/submissions
+
+- 分页：page 从 1 开始，pageSize 默认 20、最大 100；响应 {items, pagination:{page,pageSize,total,totalPages}}，超出末页返回空 items 但保留真实 total。
+- 筛选：eventId（省略时当前赛事）、teamId、userId、challengeCode、result（correct/incorrect）、source（answer/location）、requestId、from、to。除时间区间外均为精确匹配。
+- from/to 为带时区的 ISO-8601；转成 UTC 闭区间查询，非法或倒置范围返回 400。不存在赛事返回 404；teamId 不属于指定赛事返回 404，不跨赛事混查。普通管理员沿用既有全站赛事管理权限，本轮没有引入赛事范围分配。
+- 条目字段：submissionId、eventId、userId、username、nickname、teamId、teamName、challengeCode、challengeTitle、result、pointsAwarded、solvePlace、source、requestId、submittedAt。可选未知值可能省略。
+- pointsAwarded 是当次实际加分，solvePlace 为该次记录保存的解题位次；本轮不重排、不调整奖励。requestId 是客户端提交幂等编号，不等同于服务端 req_… 故障追踪编号。
+- 仅返回 submissions 中已落库的判题。相同幂等请求或已完成后的正确重复提交沿用基线返回既有结果，不人为生成新的判题记录；认证/限流/参数校验等提前拒绝的请求不冒充已判题记录。
+- 历史 teamId 固定为提交时归属；后台改队不搬移提交或成绩。teamName、username、nickname 是当前显示资料，不声称是历史姓名快照。答案、answerDigest、二维码密钥、动态 Flag 一律不返回。
+
+#### GET /api/v1/admin/audit-log（权限收紧）
+
+- 仅超管；控制器与服务层均校验。GET /api/v1/admin/dashboard 对普通管理员仍可用，但 recentActivity 为空，不能从总览旁路获取完整操作记录。
+- 保留 action、entityType、actor（操作者名称包含匹配）、page、pageSize，新增 actorId、entityId、requestId、from、to。时间规则与上文相同。
+- action、entityType、actorId、requestId、一般 entityId 均精确匹配。entityType=team 且传 entityId 时，还匹配本轮保存的 before/after 中的 teamId，所以改队前后两支队伍均能检索该变更；查询值以绑定参数和 LIKE 转义处理。
+- 响应保留 id、actor、actorId、action、entityType、entityId、requestId、clientIp、before、after、createdAt；requestId 是服务端请求编号。新队伍变动不额外收集 IP，未记录字段保持缺失。
+- before/after 为脱敏 JSON 字符串；只保留身份/赛事/队伍、状态、题目编号标题、分值等允许摘要，不保存答案、密码、Cookie、令牌、邀请码、完整二维码载荷、原始文件地址等未知字段。对既有快照读取也应用同一允许列表，无法解析时不返回原文。旧数据库/既有备份中的原始内容没有被本轮删除或重写。
+- 新队伍事件：team.created、team.joined、team.left、team.member.assigned、team.member.removed、team.renamed。before/after 含 eventId、userId（适用时）、teamId、teamName、captainId；空归属为 null。
+- 这些队伍变动与审计在同一现有事务内提交，审计写入失败则回滚变动；重复退出或无变化改名不伪造新记录。现有其他 AuditAction 仍为成功后尽力记录，本轮未宣称所有写操作都已原子审计。
+- 不提供审计编辑/删除接口，不补造上线前未记录的历史；本轮没有增加登录失败、全部下载、全部靶机动作的完整日志采集或受控导出。
+
+#### 后台交互与发布边界
+
+- 新增“提交记录”“操作审计”入口，仅打开时按页请求，不一次拉取全部日志。筛选错误、读取失败、空列表分开显示；乱序响应不得覆盖较新筛选。
+- 队伍页显示账号 ID、账号名称、昵称、队长和加入时间，直接跳转本队提交；超管可直接查看本队变动。总览使用服务端真实累计提交/解题数量，明确为全平台口径。
+- 无 DDL/迁移，无新依赖，不改变计分、靶机规则、比赛状态、账号角色、报名关系或队伍人数上限。新增 GET 查询无写副作用、无需幂等键；沿用 Cookie 会话、CSRF/同源校验及角色撤销即时失效机制。
+- 本节描述本地候选实现；不是生产已发布证明。生产需要另行授权、版本预检与镜像回退点。
+
+
+### 管理后台信息增强：生产上线记录（2026-11-11）
+
+- 上述本地候选已获明确授权并完成服务器部署。后端 tracequest-backend:admin-observability-20261111（625783fe9a38…），前端 tracequest-web:admin-observability-20261111（4fd8cd588141…）。
+- 为保护其他已上线修复，前端在当时线上 location-scan-only 镜像上仅覆盖 admin-console.html/admin-console.js；index、其他 assets、API helper、图寻扫码、题目入口和网关均保留。服务端运行时沿用原镜像，仅替换已验收的同摘要应用包。
+- 公网可信 TLS 真实 NJUPT 登录、本人身份、超管角色、管理员列表、队伍列表、新提交查询、脱敏审计、总览、本人历史/进度与探针退出均通过；匿名管理接口与靶机网关保持 401。只退出本次新建的探针会话，没有创建或提权生产账号。
+- 无迁移，无历史成绩或成员关系回写；数据库已 single-transaction 备份并 CRC 校验，权限 600。Env、只读挂载、端口、网络及共享容器快照一致；现有比赛继续接受真实提交，计数允许正常增长。
+- 原始发布契约保存在服务器 release/payload/docs，当前发布补充见 API_PUBLICATION_20261111.md 和 SERVER_OPERATIONS.md；回执及回退路径见本地 0xTrace-ops/artifacts/admin-observability-deploy-20261111/DEPLOYMENT_RECEIPT.json。
+- 生产未执行普通管理员真实账号登录、改队/调分、真实选手靶机启停及长时间压力验收；相应授权拒绝和变动流程仅有此前本地验证。本次没有 Git push 或 PR。
+
+
+## 2026-11-11 安全修复契约
+
+- `GET /api/v1/event`、`GET /api/v1/challenges`、`GET /api/v1/challenges/{code}`、`GET /api/v1/leaderboard` 必须登录，匿名返回 401；健康检查及登录方式查询仍公开。前端未登录时不加载赛事数据。
+- 新增 `GET /api/v1/auth/admin-access`：管理员/最高管理员返回 204，普通选手 403，匿名 401。Nginx 对 `/admin-console.html` 和 `/admin-console.js`（含查询参数）执行该校验，响应 `private, no-store`；内部鉴权路径不公开。管理 API 自身权限校验继续保留。
+- 答题 DTO 的 `answer` 仅接受非空 JSON 字符串，最长 512 字符；数字、布尔、对象、数组、null 均返回 400。已解题再次提交错误答案返回 `incorrect`、`pointsAwarded: 0` 并记录错误；相同幂等键重放仍返回原响应，正确重交继续返回首次完成数据。历史解题成绩不变。
+- 已登录用户使用不支持的 HTTP 方法返回 405/METHOD_NOT_ALLOWED 和 Allow；路径或查询参数类型错误返回 400/VALIDATION_ERROR；不存在题目的正常 GET 返回 404。
+- 网关 `/entry/{code}/` 仅查询和转发已有环境，GET/HEAD 不自动启动环境，不删除其他靶机。未启动返回 409，选手在详情页显式 POST 启动；停止仍显式 DELETE。过期实例状态查询返回 STOPPED，回收由调度或显式生命周期操作处理。
+- 入口网关后台查询最长 5 秒；上游错误文本 HTML 转义。向靶题转发时移除本站 tq_session、Authorization 和 Proxy-Authorization，并拒绝靶题覆盖 tq_session Cookie。
+- 网关与靶题仍共用浏览器来源；上述凭据过滤不等于浏览器来源隔离。完整的独立来源部署及历史成绩审计未包含在本次补丁。
+
+
+### 2026-11-11 图寻仅扫码与判题重试校验
+
+- 图寻题的文本答案接口始终返回 409 `LOCATION_QR_REQUIRED`；历史标准答案、哈希和任意文字均不进入判题或计分，不新增提交/解题记录。前端仍使用 `/api/v1/location-verifications`。
+- 所有提交每次先校验当前题型、赛事开放时间窗、赛事队伍、当前容器 Flag 或二维码凭证，再进行幂等回放与计分。二维码撤销、过期、轮换或赛事关闭后，即使携带曾成功的 Idempotency-Key/requestId，也不回放旧成功响应。
+- 幂等快照在计分入口使用新作用域 `validated-scoring-v1`，指纹包含题目、当前队伍、提交来源和判题结果。旧作用域记录保留，读取路径不再使用它们。requestId 还校验原队伍、来源和结果，跨题/跨队/换内容或规则变化导致的冲突返回 409 `IDEMPOTENCY_CONFLICT`。
+- 文本题与位置题共用账号锁和题目锁，计分仍在同一事务中提交，同队同题只计一次。Web 容器题只能使用当前本队实例的 Flag；其他队伍、其他题目和旧实例 Flag 均不被当作当前凭证。
+- 无数据库迁移，不修改既有成绩或二维码，不改前端、附件、共享服务或参赛者容器。本次测试覆盖旧通用答案、历史缓存绕过、二维码失效、跨队 Flag 与并发奖励；静态二维码被他人拍摄转发不等同于现场定位证明。
+
+
+### 2026-11-11 运行时实例保留与删除确认
+
+- 重复启动 READY 容器时，Docker 状态查询异常必须只读确认是否真正不存在。容器仍存在或 Docker 不可用时返回 503 `CONTAINER_RUNTIME_ERROR`，保留原实例、Flag、期限和容器，禁止自动销毁重建。状态查询命令采用不超过 5 秒的短预算。
+- 显式删除或定时清理必须在 Docker 删除成功，或只读查询确认完整名称的容器确实不存在后，才删除实例记录/标记停止。删除失败或无法确认时返回/报告受控错误并保留记录；批量任务继续处理其他实例。
+- 启动失败后的清理再次失败时保留明确的 FAILED 状态供重试；归档/删除题目遇到未确认的容器清理时明确报错，避免假成功或资源丢失。
+- 无数据库迁移、不改变判题/角色/题目规则；主动销毁、到期重建或靶题自身进程重启后的内存进度并不由平台持久化。

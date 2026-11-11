@@ -1,14 +1,16 @@
 package com.qaqxianyuqaq.backend.service.challenge.impl;
 
+import com.qaqxianyuqaq.backend.aspect.DistributedLock;
 import com.qaqxianyuqaq.backend.domain.dto.challenge.LocationPayloadDTO;
 import com.qaqxianyuqaq.backend.domain.dto.challenge.LocationQrRequestDTO;
 import com.qaqxianyuqaq.backend.domain.dto.submission.LocationVerificationDTO;
 import com.qaqxianyuqaq.backend.domain.vo.challenge.LocationQrVO;
 import com.qaqxianyuqaq.backend.domain.vo.submission.SubmissionResultVO;
 
-import com.qaqxianyuqaq.backend.aspect.Idempotent;
 import com.qaqxianyuqaq.backend.aspect.RateLimit;
 import com.qaqxianyuqaq.backend.domain.entity.Challenge;
+import com.qaqxianyuqaq.backend.domain.entity.Team;
+import com.qaqxianyuqaq.backend.service.contestant.TeamService;
 import com.qaqxianyuqaq.backend.domain.entity.EventConfig;
 import com.qaqxianyuqaq.backend.domain.entity.LocationToken;
 import com.qaqxianyuqaq.backend.domain.enums.ChallengeStatus;
@@ -47,14 +49,17 @@ public class LocationServiceImpl implements LocationService {
 
     private final PermissionAssert permissionAssert;
 
+    private final TeamService teamService;
+
     public LocationServiceImpl(LocationTokenMapper locationTokenMapper, ChallengeService challengeService,
                               EventService eventService, ScoringService scoringService,
-                              PermissionAssert permissionAssert) {
+                              PermissionAssert permissionAssert, TeamService teamService) {
         this.locationTokenMapper = locationTokenMapper;
         this.challengeService = challengeService;
         this.eventService = eventService;
         this.scoringService = scoringService;
         this.permissionAssert = permissionAssert;
+        this.teamService = teamService;
     }
 
     @Override
@@ -118,9 +123,9 @@ public class LocationServiceImpl implements LocationService {
     }
 
     @Override
-    @Transactional
+    // 与答案提交共用锁内计分事务，校验阶段不提前建立 MySQL 快照。
     @RateLimit(scope = "location-verify")
-    @Idempotent(scope = "location-verification")
+    @DistributedLock(key = "'submission-user:' + #p1.userId()")
     public SubmissionResultVO verify(LocationVerificationDTO request,
                                                     UserPrincipal principal) {
         // 1. 校验操作者具备参赛权限
@@ -154,13 +159,17 @@ public class LocationServiceImpl implements LocationService {
         // 5. 校验题目所属赛事处于开放状态
         EventConfig event = challenge.getEventId() == null
                 ? eventService.requireCurrent() : eventService.requireById(challenge.getEventId());
-        if (event.getStatus() != EventStatus.OPEN) {
+        LocalDateTime now = TimeUtil.now();
+        if (event.getStatus() != EventStatus.OPEN
+                || (event.getStartsAt() != null && now.isBefore(event.getStartsAt()))
+                || (event.getEndsAt() != null && !now.isBefore(event.getEndsAt()))) {
             throw new ConflictException(ErrorCode.SUBMISSION_CLOSED, "赛事当前不可作答");
         }
 
-        // 6. 核验通过后交由计分引擎记分，同队同题只计一次
+        // 6. 每次重试均确认当前赛事队伍，随后才允许回放或首次计分
+        Team team = teamService.requireMembership(event.getId(), principal.userId());
         return scoringService.award(principal, challenge,
                 com.qaqxianyuqaq.backend.domain.enums.SolveSource.LOCATION, request.payload(),
-                request.requestId(), true);
+                request.requestId(), true, team);
     }
 }

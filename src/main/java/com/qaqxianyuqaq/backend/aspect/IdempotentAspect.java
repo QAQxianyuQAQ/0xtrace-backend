@@ -24,7 +24,8 @@ import java.util.Optional;
  */
 @Aspect
 @Component
-@Order(20)
+// 幂等查验和响应落库必须位于分布式锁内，避免冲突请求先产生计分副作用。
+@Order(35)
 public class IdempotentAspect {
 
     /** 幂等键请求头名称，与契约 8.1 一致。 */
@@ -61,9 +62,11 @@ public class IdempotentAspect {
 
         // 2. 未命中时执行目标方法，并把成功响应写入幂等记录
         Object result = joinPoint.proceed();
-        idempotencyService.saveResponse(idempotent.scope(), idempotencyKey, userId, requestHash,
-                JsonUtil.toJson(result));
-        return result;
+        String responseJson = JsonUtil.toJson(result);
+        String saved = idempotencyService.saveResponse(idempotent.scope(), idempotencyKey, userId, requestHash,
+                responseJson);
+        return responseJson.equals(saved) || signature.getReturnType() == void.class
+                ? result : JsonUtil.fromJson(saved, signature.getReturnType());
     }
 
     /** 读取当前请求头。 */

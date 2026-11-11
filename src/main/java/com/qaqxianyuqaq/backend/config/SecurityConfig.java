@@ -45,7 +45,7 @@ public class SecurityConfig {
         return new ProviderManager(provider);
     }
 
-    /** 安全过滤链：公开只读接口放行，后台接口要求 ADMIN 角色。 */
+    /** 安全过滤链：业务读取要求登录，后台接口要求管理员角色。 */
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtAuthenticationFilter jwtFilter,
                                                    SameOriginFilter sameOriginFilter,
@@ -64,11 +64,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/health").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/njupt/login").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/auth/providers").permitAll()
-                        // 公开赛事、题目与榜单只读接口
-                        .requestMatchers(HttpMethod.GET, "/api/v1/event").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/challenges").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/challenges/*").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/leaderboard").permitAll()
+                        // 赛事、题目与榜单不得绕过登录直接批量读取
+                        .requestMatchers(HttpMethod.GET, "/api/v1/event", "/api/v1/challenges",
+                                "/api/v1/challenges/*", "/api/v1/leaderboard").authenticated()
                         // WebSocket 握手由一次性票据拦截器鉴权
                         .requestMatchers(HttpMethod.GET, "/api/v1/challenge-connections").permitAll()
                         // 头像写入只认当前身份，读取要求登录并由服务校验有效版本

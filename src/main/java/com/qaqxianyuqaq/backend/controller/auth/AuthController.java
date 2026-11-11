@@ -17,12 +17,15 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.ResponseStatus;
 
 import java.time.Duration;
 import java.util.Map;
@@ -66,6 +69,13 @@ public class AuthController {
     @GetMapping("/providers")
     public Map<String, Boolean> providers() {
         return Map.of("local", true, "njupt", properties.getNjupt().isEnabled());
+    }
+
+    /** 为静态管理页面提供只校验当前会话角色、不查询后台业务数据的入口。 */
+    @GetMapping("/admin-access")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void adminAccess() {
     }
 
     /** 学校认证成功后使用同一套本站 Cookie 会话。 */

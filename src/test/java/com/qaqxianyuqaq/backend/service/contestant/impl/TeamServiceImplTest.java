@@ -13,6 +13,7 @@ import com.qaqxianyuqaq.backend.repository.event.EventMapper;
 import com.qaqxianyuqaq.backend.repository.user.TeamMapper;
 import com.qaqxianyuqaq.backend.repository.user.TeamMemberMapper;
 import com.qaqxianyuqaq.backend.security.PermissionAssert;
+import com.qaqxianyuqaq.backend.service.audit.AuditService;
 import com.qaqxianyuqaq.backend.security.UserPrincipal;
 import com.qaqxianyuqaq.backend.util.TimeUtil;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,6 +48,9 @@ class TeamServiceImplTest {
 
     @Mock
     private PermissionAssert permissionAssert;
+
+    @Mock
+    private AuditService auditService;
 
     @InjectMocks
     private TeamServiceImpl teamService;
@@ -125,15 +129,21 @@ class TeamServiceImplTest {
     @DisplayName("退出仅删除本人的赛事成员关系并允许重复操作")
     void shouldLeaveOnlyOwnMembershipIdempotently() {
         when(eventMapper.selectById("evt_1")).thenReturn(event);
+        TeamMember membership = new TeamMember();
+        membership.setEventId("evt_1"); membership.setTeamId("team_1"); membership.setUserId("usr_captain");
+        Team team = new Team(); team.setId("team_1"); team.setEventId("evt_1"); team.setName("Before leave");
+        when(teamMemberMapper.selectOne(any(Wrapper.class))).thenReturn(membership, (TeamMember) null);
+        when(teamMapper.selectById("team_1")).thenReturn(team);
         teamService.leaveTeam("evt_1", principal);
         teamService.leaveTeam("evt_1", principal);
         var query = org.mockito.ArgumentCaptor.forClass(Wrapper.class);
-        verify(teamMemberMapper, org.mockito.Mockito.times(2)).delete(query.capture());
+        verify(teamMemberMapper).delete(query.capture());
         assertThat(query.getValue().getSqlSegment()).contains("event_id", "user_id");
         var params = ((com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?>) query.getValue())
                 .getParamNameValuePairs();
         assertThat(params.values()).contains("evt_1", "usr_captain");
-        org.mockito.Mockito.verifyNoInteractions(teamMapper);
+        verify(auditService).recordTeamChange(org.mockito.ArgumentMatchers.eq("team.left"),
+                org.mockito.ArgumentMatchers.eq("team_1"), any(String.class), any(String.class));
     }
 
     @Test

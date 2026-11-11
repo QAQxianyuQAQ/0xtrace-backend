@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.qaqxianyuqaq.backend.aspect.DistributedLock;
+import com.qaqxianyuqaq.backend.service.audit.AuditService;
+import com.qaqxianyuqaq.backend.util.AuditSnapshotUtil;
 import com.qaqxianyuqaq.backend.domain.dto.common.PageQueryDTO;
 import com.qaqxianyuqaq.backend.domain.dto.contestant.TeamCreateDTO;
 import com.qaqxianyuqaq.backend.domain.dto.contestant.TeamJoinDTO;
@@ -54,13 +56,16 @@ public class TeamServiceImpl implements TeamService {
 
     private final PermissionAssert permissionAssert;
 
+    private final AuditService auditService;
+
     public TeamServiceImpl(TeamMapper teamMapper, TeamMemberMapper teamMemberMapper, UserMapper userMapper,
-                           EventMapper eventMapper, PermissionAssert permissionAssert) {
+                           EventMapper eventMapper, PermissionAssert permissionAssert, AuditService auditService) {
         this.teamMapper = teamMapper;
         this.teamMemberMapper = teamMemberMapper;
         this.userMapper = userMapper;
         this.eventMapper = eventMapper;
         this.permissionAssert = permissionAssert;
+        this.auditService = auditService;
     }
 
     @Override
@@ -98,6 +103,11 @@ public class TeamServiceImpl implements TeamService {
 
         // 5. 将创建者登记为队伍成员，使其立即以队伍维度参赛
         insertMembership(eventId, team.getId(), principal.userId());
+
+        // 6. 与成员关系在同一事务内保存变动摘要，审计失败则回滚本次组队
+        auditService.recordTeamChange("team.created", team.getId(),
+                AuditSnapshotUtil.team(eventId, principal.userId(), null),
+                AuditSnapshotUtil.team(eventId, principal.userId(), team));
         return toVO(team, event, principal.userId());
     }
 
@@ -124,6 +134,11 @@ public class TeamServiceImpl implements TeamService {
         // 4. 校验队伍剩余容量并登记成员关系
         assertCapacity(team, event);
         insertMembership(eventId, team.getId(), principal.userId());
+
+        // 5. 记录入队身份与目标队伍，不保存邀请码
+        auditService.recordTeamChange("team.joined", team.getId(),
+                AuditSnapshotUtil.team(eventId, principal.userId(), null),
+                AuditSnapshotUtil.team(eventId, principal.userId(), team));
         return toVO(team, event, principal.userId());
     }
 
@@ -134,10 +149,22 @@ public class TeamServiceImpl implements TeamService {
         permissionAssert.assertContestant(principal);
         requireEvent(eventId);
 
-        // 2. 只删除本人的赛事成员关系，保留原队伍的计分、提交与运行实例
+        // 2. 锁定当前成员关系，再读取原队伍，避免并发改队让前后摘要失真
+        TeamMember membership = teamMemberMapper.selectOne(Wrappers.<TeamMember>lambdaQuery()
+                .eq(TeamMember::getEventId, eventId)
+                .eq(TeamMember::getUserId, principal.userId()).last("FOR UPDATE"));
+        if (membership == null) return;
+        Team before = requireEventTeam(eventId, membership.getTeamId());
+
+        // 3. 只删除本人的赛事成员关系，保留原队伍的计分、提交与运行实例
         teamMemberMapper.delete(Wrappers.<TeamMember>lambdaQuery()
                 .eq(TeamMember::getEventId, eventId)
                 .eq(TeamMember::getUserId, principal.userId()));
+
+        // 4. 与退出操作原子保存前后队伍归属，不为重复退出编造变更
+        auditService.recordTeamChange("team.left", before.getId(),
+                AuditSnapshotUtil.team(eventId, principal.userId(), before),
+                AuditSnapshotUtil.team(eventId, principal.userId(), null));
     }
 
     @Override
@@ -225,10 +252,13 @@ public class TeamServiceImpl implements TeamService {
         // 1. 无队伍时清除该赛事的成员关系
         TeamMember current = teamMemberMapper.selectOne(Wrappers.<TeamMember>lambdaQuery()
                 .eq(TeamMember::getEventId, eventId)
-                .eq(TeamMember::getUserId, userId));
+                .eq(TeamMember::getUserId, userId).last("FOR UPDATE"));
         if (teamId == null) {
             if (current != null) {
+                Team before = requireEventTeam(eventId, current.getTeamId());
                 teamMemberMapper.deleteById(current.getId());
+                auditService.recordTeamChange("team.member.removed", before.getId(),
+                        AuditSnapshotUtil.team(eventId, userId, before), AuditSnapshotUtil.team(eventId, userId, null));
             }
             return;
         }
@@ -242,10 +272,15 @@ public class TeamServiceImpl implements TeamService {
         Team team = requireEventTeam(eventId, teamId);
         EventConfig event = requireEvent(eventId);
         assertCapacity(team, event);
+        Team before = current == null ? null : requireEventTeam(eventId, current.getTeamId());
         if (current != null) {
             teamMemberMapper.deleteById(current.getId());
         }
         insertMembership(eventId, teamId, userId);
+
+        // 4. 管理员改队记录真实的前后关系，历史成绩不会随成员关系转移
+        auditService.recordTeamChange("team.member.assigned", teamId,
+                AuditSnapshotUtil.team(eventId, userId, before), AuditSnapshotUtil.team(eventId, userId, team));
     }
 
     @Override
@@ -342,7 +377,9 @@ public class TeamServiceImpl implements TeamService {
         if (event == null) {
             throw new NotFoundException("赛事尚未配置");
         }
-        Team team = requireEventTeam(event.getId(), teamId);
+        Team team = teamMapper.selectOne(Wrappers.<Team>lambdaQuery()
+                .eq(Team::getEventId, event.getId()).eq(Team::getId, teamId).last("FOR UPDATE"));
+        if (team == null) throw new NotFoundException("赛事队伍不存在");
 
         // 3. 规范化队伍名称并校验同赛事唯一性
         String normalizedName = name == null ? "" : name.trim();
@@ -357,9 +394,15 @@ public class TeamServiceImpl implements TeamService {
             throw new ConflictException("该赛事已存在同名队伍");
         }
 
-        // 4. 保存新名称并返回轻量队伍摘要
+        // 4. 无变化时不制造变更记录，实际改名前保存旧名称
+        if (normalizedName.equals(team.getName())) return new TeamBriefVO(team.getId(), team.getName());
+        String before = AuditSnapshotUtil.team(event.getId(), null, team);
         team.setName(normalizedName);
         teamMapper.updateById(team);
+
+        // 5. 同事务保存队名变更前后摘要，供最高管理员追溯
+        auditService.recordTeamChange("team.renamed", teamId, before,
+                AuditSnapshotUtil.team(event.getId(), null, team));
         return new TeamBriefVO(team.getId(), team.getName());
     }
 

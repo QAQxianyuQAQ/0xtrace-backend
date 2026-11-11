@@ -32,7 +32,7 @@ class SubmissionHistoryIntegrationTest {
     void shouldReadEmptyAndPopulatedHistory() throws Exception {
         Cookie admin = login("admin", "admin12345");
         mockMvc.perform(post("/api/v1/admin/challenges").cookie(admin).contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("code", "HISTORY-01", "title", "历史记录回归", "category", "图寻",
+                        .content(objectMapper.writeValueAsString(Map.of("code", "HISTORY-01", "title", "历史记录回归", "category", "misc",
                                 "difficulty", "中等", "points", 400, "bonuses", Map.of("first", 100, "second", 60, "third", 30, "other", 0),
                                 "description", "回归测试", "answer", "flag{history}", "status", "draft"))))
                 .andExpect(status().isCreated());

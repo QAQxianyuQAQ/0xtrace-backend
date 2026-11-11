@@ -255,6 +255,105 @@ class ChallengeContainerServiceImplTest {
         }
     }
 
+    @Test
+    @DisplayName("查询过期实例只报告停止，不调用 Docker 或删除记录")
+    void shouldNotDestroyExpiredInstanceOnStatusRead() {
+        ChallengeContainerInstance expired = readyInstance(challenge.getId(), Duration.ofMinutes(-1));
+        when(instanceMapper.selectOne(any(Wrapper.class))).thenReturn(expired);
+        properties.getRuntime().setDockerBinary(tempDir.resolve("docker-must-not-run").toString());
+        assertThat(service.status(challenge, team).status()).isEqualTo("STOPPED");
+        verify(instanceMapper, never()).deleteById(any(ChallengeContainerInstance.class));
+        verify(instanceMapper, never()).updateById(any(ChallengeContainerInstance.class));
+    }
+
+    @Test
+    @DisplayName("Docker 检查暂时失败不能删除仍存在的实例或重置 Flag")
+    void shouldPreserveReadyInstanceWhenDockerInspectionFails() throws IOException {
+        stubOpenEvent();
+        ChallengeContainerInstance ready = readyInstance(challenge.getId(), Duration.ofMinutes(20));
+        ready.setFlagSecret("original-encrypted-flag");
+        when(instanceMapper.selectOne(any(Wrapper.class))).thenReturn(ready);
+        useDockerScript("case \"$1\" in\n"
+                + "inspect) echo 'temporary daemon failure'; exit 1;;\n"
+                + "container) echo '" + ready.getContainerName() + "'; exit 0;;\n"
+                + "*) exit 91;;\nesac");
+        assertThatThrownBy(() -> service.ensureStarted(challenge, team))
+                .isInstanceOf(com.qaqxianyuqaq.backend.exception.ContainerRuntimeException.class)
+                .hasMessageContaining("原实例已保留");
+        assertThat(ready.getFlagSecret()).isEqualTo("original-encrypted-flag");
+        verify(instanceMapper, never()).deleteById(ready.getId());
+        verify(instanceMapper, never()).insert(any(ChallengeContainerInstance.class));
+        verify(instanceMapper, never()).updateById(any(ChallengeContainerInstance.class));
+        verify(passwordEncoder, never()).encode(any());
+    }
+
+    @Test
+    @DisplayName("销毁未成功时保留数据库实例和队伍配额")
+    void shouldKeepInstanceRecordWhenDockerRemovalFails() throws IOException {
+        ChallengeContainerInstance ready = readyInstance(challenge.getId(), Duration.ofMinutes(20));
+        when(instanceMapper.selectOne(any(Wrapper.class))).thenReturn(ready);
+        useDockerScript("if [ \"$1\" = container ]; then echo '" + ready.getContainerName() + "'; exit 0; fi\nexit 1");
+        assertThatThrownBy(() -> service.stop(challenge, team))
+                .isInstanceOf(com.qaqxianyuqaq.backend.exception.ContainerRuntimeException.class);
+        verify(instanceMapper, never()).deleteById(ready.getId());
+    }
+
+    @Test
+    @DisplayName("批量销毁遇到一个失败时保留其状态并继续处理其他队伍")
+    void shouldPreserveFailedBulkRemovalAndContinueOtherTeams() throws IOException {
+        ChallengeContainerInstance first = readyInstance(challenge.getId(), Duration.ofMinutes(20));
+        ChallengeContainerInstance second = readyInstance(challenge.getId(), Duration.ofMinutes(20));
+        second.setId("cinst_2"); second.setContainerName("tq-other-team");
+        when(instanceMapper.selectList(any(Wrapper.class))).thenReturn(java.util.List.of(first, second));
+        useDockerScript("if [ \"$1\" = rm ] && [ \"$3\" = '" + first.getContainerName() + "' ]; then exit 1; fi\n"
+                + "if [ \"$1\" = container ]; then echo '" + first.getContainerName() + "'; fi\nexit 0");
+        assertThatThrownBy(() -> service.stopByChallenge(challenge.getId()))
+                .isInstanceOf(com.qaqxianyuqaq.backend.exception.ContainerRuntimeException.class);
+        assertThat(first.getStatus()).isEqualTo(ContainerStatus.READY);
+        assertThat(second.getStatus()).isEqualTo(ContainerStatus.STOPPED);
+        verify(instanceMapper, never()).updateById(first);
+        verify(instanceMapper).updateById(second);
+    }
+
+    @Test
+    @DisplayName("定时清理保留删除失败记录并继续清理其他已到期实例")
+    void shouldKeepFailedExpiryCleanupAndContinueOtherInstances() throws IOException {
+        ChallengeContainerInstance first = readyInstance(challenge.getId(), Duration.ofMinutes(-2));
+        ChallengeContainerInstance second = readyInstance(challenge.getId(), Duration.ofMinutes(-2));
+        second.setId("cinst_2"); second.setContainerName("tq-other-team");
+        when(instanceMapper.selectList(any(Wrapper.class))).thenReturn(java.util.List.of(first, second));
+        useDockerScript("if [ \"$1\" = rm ] && [ \"$3\" = '" + first.getContainerName() + "' ]; then exit 1; fi\n"
+                + "if [ \"$1\" = container ]; then echo '" + first.getContainerName() + "'; fi\nexit 0");
+        assertThatThrownBy(() -> service.cleanupExpired())
+                .isInstanceOf(com.qaqxianyuqaq.backend.exception.ContainerRuntimeException.class);
+        verify(instanceMapper, never()).deleteById(first.getId());
+        verify(instanceMapper).deleteById(second.getId());
+    }
+
+    @Test
+    @DisplayName("启动失败后的容器清理也失败时保存明确的失败状态供重试")
+    void shouldMarkFailedWhenStartupRollbackCannotRemoveContainer() throws IOException {
+        stubOpenEvent();
+        properties.getRuntime().setStartTimeout(Duration.ofMillis(10));
+        properties.getRuntime().setHealthInterval(Duration.ofMillis(1));
+        int port;
+        try (ServerSocket socket = new ServerSocket(0)) { port = socket.getLocalPort(); }
+        Path removed = tempDir.resolve("first-remove-completed");
+        useDockerScript("case \"$1\" in\nnetwork) exit 0;;\n"
+                + "rm) if [ -e '" + removed + "' ]; then exit 1; fi; touch '" + removed + "'; exit 0;;\n"
+                + "image) echo '[{\"Config\":{\"ExposedPorts\":{\"" + port + "/tcp\":{}}}}]';;\n"
+                + "run) echo '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';;\n"
+                + "inspect) echo '[{\"Id\":\"container-id\",\"State\":{\"Status\":\"running\"},"
+                + "\"NetworkSettings\":{\"Networks\":{\"tracequest-runtime\":{\"IPAddress\":\"127.0.0.1\"}},\"Ports\":{}}}]';;\n"
+                + "container) echo 'tq-chal_1-team_1';;\n*) exit 91;;\nesac");
+        assertThatThrownBy(() -> service.ensureStarted(challenge, team))
+                .isInstanceOf(com.qaqxianyuqaq.backend.exception.ContainerRuntimeException.class);
+        ArgumentCaptor<ChallengeContainerInstance> inserted = ArgumentCaptor.forClass(ChallengeContainerInstance.class);
+        verify(instanceMapper).insert(inserted.capture());
+        assertThat(inserted.getValue().getStatus()).isEqualTo(ContainerStatus.FAILED);
+        assertThat(inserted.getValue().getLastError()).contains("原实例已保留");
+    }
+
     private void useDockerScript(String body) throws IOException {
         Path executable = tempDir.resolve("fake-docker");
         Files.writeString(executable, "#!/bin/sh\n" + body + "\n");

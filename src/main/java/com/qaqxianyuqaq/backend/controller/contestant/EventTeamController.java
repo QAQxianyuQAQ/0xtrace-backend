@@ -1,6 +1,5 @@
 package com.qaqxianyuqaq.backend.controller.contestant;
 
-import com.qaqxianyuqaq.backend.aspect.AuditAction;
 import com.qaqxianyuqaq.backend.aspect.RateLimit;
 import com.qaqxianyuqaq.backend.domain.dto.contestant.TeamCreateDTO;
 import com.qaqxianyuqaq.backend.domain.dto.contestant.TeamJoinDTO;
@@ -34,7 +33,6 @@ public class EventTeamController {
     /** 创建赛事队伍并返回只对该赛事有效的唯一标识码。 */
     @PostMapping
     @RateLimit(scope = "team-write")
-    @AuditAction(value = "team.created", entityType = "team")
     public ResponseEntity<TeamMembershipVO> create(
             @PathVariable String eventId,
             @Valid @RequestBody TeamCreateDTO request,
@@ -46,7 +44,6 @@ public class EventTeamController {
     /** 使用队伍唯一标识码加入赛事队伍。 */
     @PostMapping("/join")
     @RateLimit(scope = "team-write")
-    @AuditAction(value = "team.joined", entityType = "team")
     public TeamMembershipVO join(
             @PathVariable String eventId,
             @Valid @RequestBody TeamJoinDTO request,
@@ -58,7 +55,6 @@ public class EventTeamController {
     @DeleteMapping("/me")
     @PreAuthorize("hasRole('CONTESTANT')")
     @RateLimit(scope = "team-write")
-    @AuditAction(value = "team.left", entityType = "team")
     public ResponseEntity<Void> leave(
             @PathVariable String eventId,
             @AuthenticationPrincipal UserPrincipal principal) {

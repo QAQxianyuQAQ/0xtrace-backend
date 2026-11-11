@@ -9,6 +9,7 @@ import com.qaqxianyuqaq.backend.service.cache.IdempotencyService;
 import com.qaqxianyuqaq.backend.util.IdGenerator;
 import com.qaqxianyuqaq.backend.util.TimeUtil;
 import org.springframework.stereotype.Service;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.util.Optional;
 
@@ -45,10 +46,10 @@ public class IdempotencyServiceImpl implements IdempotencyService {
     }
 
     @Override
-    public void saveResponse(String scope, String idempotencyKey, String userId, String requestHash,
+    public String saveResponse(String scope, String idempotencyKey, String userId, String requestHash,
                              String responseJson) {
         if (idempotencyKey == null || idempotencyKey.isBlank() || responseJson == null) {
-            return;
+            return responseJson;
         }
         // 保存首次成功响应快照，供重试请求直接回放
         IdempotencyRecord record = new IdempotencyRecord();
@@ -59,6 +60,12 @@ public class IdempotencyServiceImpl implements IdempotencyService {
         record.setRequestHash(requestHash);
         record.setResponseJson(responseJson);
         record.setCreatedAt(TimeUtil.now());
-        idempotencyRecordMapper.insert(record);
+        try {
+            idempotencyRecordMapper.insert(record);
+            return responseJson;
+        } catch (DuplicateKeyException exception) {
+            // 并发请求只采用已提交的首个快照，内容不同仍由原校验返回 409。
+            return findResponse(scope, idempotencyKey, userId, requestHash).orElseThrow(() -> exception);
+        }
     }
 }

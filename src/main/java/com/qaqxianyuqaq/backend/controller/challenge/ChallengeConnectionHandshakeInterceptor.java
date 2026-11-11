@@ -10,7 +10,7 @@ import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.server.HandshakeInterceptor;
 import org.springframework.web.util.UriComponentsBuilder;
 
-import java.net.URI;
+import com.qaqxianyuqaq.backend.util.OriginUtil;
 import java.util.List;
 import java.util.Map;
 
@@ -64,17 +64,7 @@ public class ChallengeConnectionHandshakeInterceptor implements HandshakeInterce
         if (originHeaders == null || originHeaders.isEmpty()) {
             return false;
         }
-        String origin = originHeaders.getFirst();
-        List<String> allowed = properties.getSecurity().getAllowedOrigins();
-        if (allowed != null && allowed.stream().anyMatch(value -> value.equalsIgnoreCase(origin))) {
-            return true;
-        }
-        try {
-            URI parsed = URI.create(origin);
-            URI requestUri = request.getURI();
-            return parsed.getHost() != null && parsed.getHost().equalsIgnoreCase(requestUri.getHost());
-        } catch (IllegalArgumentException exception) {
-            return false;
-        }
+        return OriginUtil.isAllowed(originHeaders.getFirst(), request.getURI(),
+                properties.getSecurity().getAllowedOrigins());
     }
 }

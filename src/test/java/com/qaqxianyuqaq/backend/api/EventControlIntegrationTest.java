@@ -59,7 +59,7 @@ class EventControlIntegrationTest {
             for (String field : new String[]{"id", "name", "timezone", "maxTeamSize", "startsAt", "endsAt"}) {
                 assertThat(after.get(field)).as(field + " should be preserved").isEqualTo(before.get(field));
             }
-            mockMvc.perform(get("/api/v1/event"))
+            mockMvc.perform(get("/api/v1/event").cookie(admin))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.status").value(target));
         }
         mockMvc.perform(patch("/api/v1/admin/event").cookie(admin).contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"open\"}"))

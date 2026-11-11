@@ -45,6 +45,42 @@ class TraceQuestApiIntegrationTest {
     private ObjectMapper objectMapper;
 
     @Test
+    void shouldRejectRequestIdReuseForAnotherAnswerOrChallenge() throws Exception {
+        String admin = login("admin", "admin12345");
+        mockMvc.perform(post("/api/v1/admin/contestants").cookie(sessionCookie(admin))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("username", "replay_player", "password", "secret123", "teamName", "Replay Team"))))
+                .andExpect(status().isCreated());
+        for (String code : new String[]{"REPLAY-A", "REPLAY-B"}) {
+            mockMvc.perform(post("/api/v1/admin/challenges").cookie(sessionCookie(admin))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json(challengePayload(code, code, "misc", 100))))
+                    .andExpect(status().isCreated());
+            mockMvc.perform(post("/api/v1/admin/challenges/" + code + "/publish").cookie(sessionCookie(admin)))
+                    .andExpect(status().isOk());
+        }
+        String player = login("replay_player", "secret123");
+        for (int replay = 0; replay < 2; replay++) {
+            mockMvc.perform(post("/api/v1/challenges/REPLAY-A/submissions").cookie(sessionCookie(player))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json(Map.of("answer", "wrong", "requestId", "same-body-key"))))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.result").value("incorrect"));
+        }
+        mockMvc.perform(post("/api/v1/challenges/REPLAY-A/submissions").cookie(sessionCookie(player))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("answer", "flag{refraction}", "requestId", "same-body-key"))))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("IDEMPOTENCY_CONFLICT"));
+        mockMvc.perform(post("/api/v1/challenges/REPLAY-B/submissions").cookie(sessionCookie(player))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("answer", "wrong", "requestId", "same-body-key"))))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("IDEMPOTENCY_CONFLICT"));
+        mockMvc.perform(get("/api/v1/me/submissions").cookie(sessionCookie(player)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(1));
+        mockMvc.perform(get("/api/v1/me/progress").cookie(sessionCookie(player)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.score").value(0));
+    }
+
+    @Test
     @DisplayName("最高管理员管理普通管理员，队伍权限与角色变更会话失效")
     void shouldManageAdminRolesAndTeamsWithServerSideAuthorization() throws Exception {
         String superAdmin = login("admin", "admin12345");
@@ -140,7 +176,7 @@ class TraceQuestApiIntegrationTest {
         mockMvc.perform(post("/api/v1/admin/challenges")
                         .cookie(sessionCookie(adminSession))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(challengePayload("GEO-01", "折射场", "图寻", 400))))
+                        .content(json(challengePayload("GEO-01", "折射场", "misc", 400))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.code").value("GEO-01"))
                 .andExpect(jsonPath("$.status").value("draft"))
@@ -302,8 +338,14 @@ class TraceQuestApiIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
 
-        // 5. 幂等键重放返回首次响应，不重复计分
-        MvcResult first = mockMvc.perform(post("/api/v1/challenges/GEO-02/submissions")
+        // 5. 文本幂等在普通题上验证，图寻题禁止文本提交
+        mockMvc.perform(post("/api/v1/admin/challenges").cookie(sessionCookie(adminSession))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(challengePayload("TEXT-IDEM", "文本重试", "misc", 100))))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/v1/admin/challenges/TEXT-IDEM/publish").cookie(sessionCookie(adminSession)))
+                .andExpect(status().isOk());
+        MvcResult first = mockMvc.perform(post("/api/v1/challenges/TEXT-IDEM/submissions")
                         .cookie(sessionCookie(eastSession))
                         .header("Idempotency-Key", "idem-key-1")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -311,7 +353,7 @@ class TraceQuestApiIntegrationTest {
                                 "requestId", "answer-1"))))
                 .andExpect(status().isOk())
                 .andReturn();
-        MvcResult replay = mockMvc.perform(post("/api/v1/challenges/GEO-02/submissions")
+        MvcResult replay = mockMvc.perform(post("/api/v1/challenges/TEXT-IDEM/submissions")
                         .cookie(sessionCookie(eastSession))
                         .header("Idempotency-Key", "idem-key-1")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -322,7 +364,7 @@ class TraceQuestApiIntegrationTest {
         assertThat(read(replay, "$.submissionId")).isEqualTo(read(first, "$.submissionId"));
 
         // 6. 同一幂等键换内容应返回 409
-        mockMvc.perform(post("/api/v1/challenges/GEO-02/submissions")
+        mockMvc.perform(post("/api/v1/challenges/TEXT-IDEM/submissions")
                         .cookie(sessionCookie(eastSession))
                         .header("Idempotency-Key", "idem-key-1")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -493,7 +535,7 @@ class TraceQuestApiIntegrationTest {
     @DisplayName("赛事内可创建 Docker 题目并严格校验运行字段")
     void shouldCreateEventScopedDockerChallenge() throws Exception {
         String adminSession = login("admin", "admin12345");
-        MvcResult currentEvent = mockMvc.perform(get("/api/v1/event"))
+        MvcResult currentEvent = mockMvc.perform(get("/api/v1/event").cookie(sessionCookie(adminSession)))
                 .andExpect(status().isOk())
                 .andReturn();
         String eventId = read(currentEvent, "$.id");
@@ -526,7 +568,7 @@ class TraceQuestApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("published"));
 
-        mockMvc.perform(get("/api/v1/challenges/PWN-DOCKER"))
+        mockMvc.perform(get("/api/v1/challenges/PWN-DOCKER").cookie(sessionCookie(adminSession)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.containerEnabled").value(true))
                 .andExpect(jsonPath("$.dockerImage").doesNotExist())
