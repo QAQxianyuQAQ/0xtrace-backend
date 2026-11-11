@@ -1,30 +1,45 @@
 package com.qaqxianyuqaq.backend.service.contestant.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.qaqxianyuqaq.backend.aspect.DistributedLock;
+import com.qaqxianyuqaq.backend.service.audit.AuditService;
+import com.qaqxianyuqaq.backend.util.AuditSnapshotUtil;
+import com.qaqxianyuqaq.backend.domain.dto.common.PageQueryDTO;
 import com.qaqxianyuqaq.backend.domain.dto.contestant.TeamCreateDTO;
 import com.qaqxianyuqaq.backend.domain.dto.contestant.TeamJoinDTO;
 import com.qaqxianyuqaq.backend.domain.entity.EventConfig;
 import com.qaqxianyuqaq.backend.domain.entity.Team;
 import com.qaqxianyuqaq.backend.domain.entity.TeamMember;
+import com.qaqxianyuqaq.backend.domain.entity.User;
 import com.qaqxianyuqaq.backend.domain.enums.EventStatus;
 import com.qaqxianyuqaq.backend.domain.vo.contestant.TeamMembershipVO;
+import com.qaqxianyuqaq.backend.domain.vo.admin.ManagedTeamVO;
+import com.qaqxianyuqaq.backend.domain.vo.common.PageVO;
+import com.qaqxianyuqaq.backend.domain.vo.contestant.TeamBriefVO;
+import com.qaqxianyuqaq.backend.domain.vo.contestant.TeamMemberVO;
 import com.qaqxianyuqaq.backend.exception.ConflictException;
 import com.qaqxianyuqaq.backend.exception.NotFoundException;
 import com.qaqxianyuqaq.backend.exception.ValidationFailedException;
 import com.qaqxianyuqaq.backend.repository.event.EventMapper;
 import com.qaqxianyuqaq.backend.repository.user.TeamMapper;
 import com.qaqxianyuqaq.backend.repository.user.TeamMemberMapper;
+import com.qaqxianyuqaq.backend.repository.user.UserMapper;
 import com.qaqxianyuqaq.backend.security.PermissionAssert;
 import com.qaqxianyuqaq.backend.security.UserPrincipal;
 import com.qaqxianyuqaq.backend.service.contestant.TeamService;
 import com.qaqxianyuqaq.backend.util.IdGenerator;
 import com.qaqxianyuqaq.backend.util.TeamCodeGenerator;
+import com.qaqxianyuqaq.backend.util.PageUtil;
 import com.qaqxianyuqaq.backend.util.TimeUtil;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Locale;
 
 /** 赛事队伍服务实现。 */
@@ -35,21 +50,27 @@ public class TeamServiceImpl implements TeamService {
 
     private final TeamMemberMapper teamMemberMapper;
 
+    private final UserMapper userMapper;
+
     private final EventMapper eventMapper;
 
     private final PermissionAssert permissionAssert;
 
-    public TeamServiceImpl(TeamMapper teamMapper, TeamMemberMapper teamMemberMapper,
-                           EventMapper eventMapper, PermissionAssert permissionAssert) {
+    private final AuditService auditService;
+
+    public TeamServiceImpl(TeamMapper teamMapper, TeamMemberMapper teamMemberMapper, UserMapper userMapper,
+                           EventMapper eventMapper, PermissionAssert permissionAssert, AuditService auditService) {
         this.teamMapper = teamMapper;
         this.teamMemberMapper = teamMemberMapper;
+        this.userMapper = userMapper;
         this.eventMapper = eventMapper;
         this.permissionAssert = permissionAssert;
+        this.auditService = auditService;
     }
 
     @Override
     @Transactional
-    @DistributedLock(key = "'team-create:' + #eventId + ':' + #principal.userId()")
+    @DistributedLock(key = "'team-create:' + #p0 + ':' + #p2.userId()")
     public TeamMembershipVO createTeam(String eventId, TeamCreateDTO request, UserPrincipal principal) {
         // 1. 校验选手身份与赛事当前允许组队
         permissionAssert.assertContestant(principal);
@@ -82,12 +103,17 @@ public class TeamServiceImpl implements TeamService {
 
         // 5. 将创建者登记为队伍成员，使其立即以队伍维度参赛
         insertMembership(eventId, team.getId(), principal.userId());
+
+        // 6. 与成员关系在同一事务内保存变动摘要，审计失败则回滚本次组队
+        auditService.recordTeamChange("team.created", team.getId(),
+                AuditSnapshotUtil.team(eventId, principal.userId(), null),
+                AuditSnapshotUtil.team(eventId, principal.userId(), team));
         return toVO(team, event, principal.userId());
     }
 
     @Override
     @Transactional
-    @DistributedLock(key = "'team-join:' + #eventId + ':' + #request.code()")
+    @DistributedLock(key = "'team-join:' + #p0 + ':' + #p1.code()")
     public TeamMembershipVO joinTeam(String eventId, TeamJoinDTO request, UserPrincipal principal) {
         // 1. 校验选手身份与赛事当前允许组队
         permissionAssert.assertContestant(principal);
@@ -108,7 +134,37 @@ public class TeamServiceImpl implements TeamService {
         // 4. 校验队伍剩余容量并登记成员关系
         assertCapacity(team, event);
         insertMembership(eventId, team.getId(), principal.userId());
+
+        // 5. 记录入队身份与目标队伍，不保存邀请码
+        auditService.recordTeamChange("team.joined", team.getId(),
+                AuditSnapshotUtil.team(eventId, principal.userId(), null),
+                AuditSnapshotUtil.team(eventId, principal.userId(), team));
         return toVO(team, event, principal.userId());
+    }
+
+    @Override
+    @Transactional
+    public void leaveTeam(String eventId, UserPrincipal principal) {
+        // 1. 限定为选手本人并核验赛事存在，允许结束后退出但不开放新入队
+        permissionAssert.assertContestant(principal);
+        requireEvent(eventId);
+
+        // 2. 锁定当前成员关系，再读取原队伍，避免并发改队让前后摘要失真
+        TeamMember membership = teamMemberMapper.selectOne(Wrappers.<TeamMember>lambdaQuery()
+                .eq(TeamMember::getEventId, eventId)
+                .eq(TeamMember::getUserId, principal.userId()).last("FOR UPDATE"));
+        if (membership == null) return;
+        Team before = requireEventTeam(eventId, membership.getTeamId());
+
+        // 3. 只删除本人的赛事成员关系，保留原队伍的计分、提交与运行实例
+        teamMemberMapper.delete(Wrappers.<TeamMember>lambdaQuery()
+                .eq(TeamMember::getEventId, eventId)
+                .eq(TeamMember::getUserId, principal.userId()));
+
+        // 4. 与退出操作原子保存前后队伍归属，不为重复退出编造变更
+        auditService.recordTeamChange("team.left", before.getId(),
+                AuditSnapshotUtil.team(eventId, principal.userId(), before),
+                AuditSnapshotUtil.team(eventId, principal.userId(), null));
     }
 
     @Override
@@ -196,10 +252,13 @@ public class TeamServiceImpl implements TeamService {
         // 1. 无队伍时清除该赛事的成员关系
         TeamMember current = teamMemberMapper.selectOne(Wrappers.<TeamMember>lambdaQuery()
                 .eq(TeamMember::getEventId, eventId)
-                .eq(TeamMember::getUserId, userId));
+                .eq(TeamMember::getUserId, userId).last("FOR UPDATE"));
         if (teamId == null) {
             if (current != null) {
+                Team before = requireEventTeam(eventId, current.getTeamId());
                 teamMemberMapper.deleteById(current.getId());
+                auditService.recordTeamChange("team.member.removed", before.getId(),
+                        AuditSnapshotUtil.team(eventId, userId, before), AuditSnapshotUtil.team(eventId, userId, null));
             }
             return;
         }
@@ -213,10 +272,15 @@ public class TeamServiceImpl implements TeamService {
         Team team = requireEventTeam(eventId, teamId);
         EventConfig event = requireEvent(eventId);
         assertCapacity(team, event);
+        Team before = current == null ? null : requireEventTeam(eventId, current.getTeamId());
         if (current != null) {
             teamMemberMapper.deleteById(current.getId());
         }
         insertMembership(eventId, teamId, userId);
+
+        // 4. 管理员改队记录真实的前后关系，历史成绩不会随成员关系转移
+        auditService.recordTeamChange("team.member.assigned", teamId,
+                AuditSnapshotUtil.team(eventId, userId, before), AuditSnapshotUtil.team(eventId, userId, team));
     }
 
     @Override
@@ -243,6 +307,103 @@ public class TeamServiceImpl implements TeamService {
         }
         Team team = teamMapper.selectById(teamId);
         return team == null ? null : team.getName();
+    }
+
+    @Override
+    public PageVO<ManagedTeamVO> adminPage(String q, PageQueryDTO query, UserPrincipal principal) {
+        // 1. 在服务层校验管理员身份，避免接口授权遗漏导致成员信息泄露
+        permissionAssert.assertAdmin(principal);
+
+        // 2. 读取最近创建的当前赛事，后台队伍管理不跨赛事混合数据
+        EventConfig event = eventMapper.selectOne(Wrappers.<EventConfig>lambdaQuery()
+                .orderByDesc(EventConfig::getCreatedAt)
+                .orderByDesc(EventConfig::getId)
+                .last("LIMIT 1"));
+        if (event == null) {
+            throw new NotFoundException("赛事尚未配置");
+        }
+
+        // 3. 按当前赛事和可选名称关键词分页读取队伍
+        IPage<Team> page = teamMapper.selectPage(new Page<>(query.page(), query.pageSize()),
+                Wrappers.<Team>lambdaQuery().eq(Team::getEventId, event.getId())
+                        .like(q != null && !q.isBlank(), Team::getName, q == null ? null : q.trim())
+                        .orderByDesc(Team::getCreatedAt));
+        List<Team> teams = page.getRecords();
+        List<String> teamIds = teams.stream().map(Team::getId).toList();
+        Map<String, List<TeamMemberVO>> membersByTeam = new HashMap<>();
+
+        // 4. 一次读取本页所有成员与账号，避免逐队查询造成 N+1 请求
+        if (!teamIds.isEmpty()) {
+            List<TeamMember> relations = teamMemberMapper.selectList(Wrappers.<TeamMember>lambdaQuery()
+                    .eq(TeamMember::getEventId, event.getId())
+                    .in(TeamMember::getTeamId, teamIds)
+                    .orderByAsc(TeamMember::getJoinedAt));
+            List<String> userIds = relations.stream().map(TeamMember::getUserId).distinct().toList();
+            Map<String, User> users = new HashMap<>();
+            if (!userIds.isEmpty()) {
+                userMapper.selectBatchIds(userIds).forEach(user -> users.put(user.getId(), user));
+            }
+            for (TeamMember relation : relations) {
+                User user = users.get(relation.getUserId());
+                Team team = teams.stream().filter(item -> item.getId().equals(relation.getTeamId()))
+                        .findFirst().orElseThrow();
+                membersByTeam.computeIfAbsent(relation.getTeamId(), ignored -> new ArrayList<>())
+                        .add(new TeamMemberVO(relation.getUserId(), user == null ? null : user.getUsername(),
+                                user == null ? null : user.getNickname(),
+                                relation.getUserId().equals(team.getCreatedBy()), relation.getJoinedAt()));
+            }
+        }
+
+        // 5. 装配队伍成员摘要与统一分页响应
+        List<ManagedTeamVO> items = teams.stream().map(team -> {
+            List<TeamMemberVO> members = membersByTeam.getOrDefault(team.getId(), List.of());
+            return new ManagedTeamVO(team.getId(), team.getEventId(), team.getName(), team.getNote(),
+                    members.size(), members, team.getCreatedAt());
+        }).toList();
+        return PageUtil.toPage(page, items);
+    }
+
+    @Override
+    @Transactional
+    public TeamBriefVO renameManagedTeam(String teamId, String name, UserPrincipal principal) {
+        // 1. 在服务层校验管理员身份，避免接口授权遗漏导致越权修改
+        permissionAssert.assertAdmin(principal);
+
+        // 2. 读取当前赛事与队伍，拒绝通过后台路径跨赛事改名
+        EventConfig event = eventMapper.selectOne(Wrappers.<EventConfig>lambdaQuery()
+                .orderByDesc(EventConfig::getCreatedAt)
+                .orderByDesc(EventConfig::getId)
+                .last("LIMIT 1"));
+        if (event == null) {
+            throw new NotFoundException("赛事尚未配置");
+        }
+        Team team = teamMapper.selectOne(Wrappers.<Team>lambdaQuery()
+                .eq(Team::getEventId, event.getId()).eq(Team::getId, teamId).last("FOR UPDATE"));
+        if (team == null) throw new NotFoundException("赛事队伍不存在");
+
+        // 3. 规范化队伍名称并校验同赛事唯一性
+        String normalizedName = name == null ? "" : name.trim();
+        if (normalizedName.isBlank()) {
+            throw new ValidationFailedException("name", "队伍名称不能为空");
+        }
+        boolean duplicated = teamMapper.exists(Wrappers.<Team>lambdaQuery()
+                .eq(Team::getEventId, event.getId())
+                .eq(Team::getName, normalizedName)
+                .ne(Team::getId, teamId));
+        if (duplicated) {
+            throw new ConflictException("该赛事已存在同名队伍");
+        }
+
+        // 4. 无变化时不制造变更记录，实际改名前保存旧名称
+        if (normalizedName.equals(team.getName())) return new TeamBriefVO(team.getId(), team.getName());
+        String before = AuditSnapshotUtil.team(event.getId(), null, team);
+        team.setName(normalizedName);
+        teamMapper.updateById(team);
+
+        // 5. 同事务保存队名变更前后摘要，供最高管理员追溯
+        auditService.recordTeamChange("team.renamed", teamId, before,
+                AuditSnapshotUtil.team(event.getId(), null, team));
+        return new TeamBriefVO(team.getId(), team.getName());
     }
 
     /** 读取可组队的赛事，已结束赛事不再接受队伍变更。 */
@@ -276,9 +437,12 @@ public class TeamServiceImpl implements TeamService {
 
     /** 校验队伍成员数未超过赛事上限。 */
     private void assertCapacity(Team team, EventConfig event) {
-        long memberCount = teamMemberMapper.selectCount(Wrappers.<TeamMember>lambdaQuery()
-                .eq(TeamMember::getTeamId, team.getId()));
-        int maxMembers = event.getMaxTeamSize() == null ? 1 : event.getMaxTeamSize();
+        // 1. 锁定队伍行并使用当前读统计成员，避免不同邀请码写法或后台并发分配突破人数上限
+        teamMapper.selectOne(Wrappers.<Team>lambdaQuery()
+                .eq(Team::getId, team.getId()).last("FOR UPDATE"));
+        long memberCount = teamMemberMapper.selectList(Wrappers.<TeamMember>lambdaQuery()
+                .eq(TeamMember::getTeamId, team.getId()).last("FOR UPDATE")).size();
+        int maxMembers = event.getMaxTeamSize() == null ? 3 : Math.min(3, event.getMaxTeamSize());
         if (memberCount >= maxMembers) {
             throw new ConflictException("队伍人数已达到当前赛事上限");
         }
@@ -301,6 +465,6 @@ public class TeamServiceImpl implements TeamService {
                 .eq(TeamMember::getTeamId, team.getId()));
         return new TeamMembershipVO(team.getId(), team.getEventId(), team.getName(), team.getJoinCode(),
                 viewerId.equals(team.getCreatedBy()), (int) memberCount,
-                event.getMaxTeamSize() == null ? 1 : event.getMaxTeamSize());
+                event.getMaxTeamSize() == null ? 3 : Math.min(3, event.getMaxTeamSize()));
     }
 }

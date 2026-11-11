@@ -1,10 +1,13 @@
 package com.qaqxianyuqaq.backend.service.submission.impl;
 
+import com.qaqxianyuqaq.backend.domain.dto.admin.AdminSubmissionQueryDTO;
+import com.qaqxianyuqaq.backend.domain.vo.submission.ManagedSubmissionVO;
+import com.qaqxianyuqaq.backend.util.RecordTimeRange;
+import com.qaqxianyuqaq.backend.aspect.DistributedLock;
 import com.qaqxianyuqaq.backend.domain.dto.common.PageQueryDTO;
 import com.qaqxianyuqaq.backend.domain.dto.submission.SubmitAnswerDTO;
 import com.qaqxianyuqaq.backend.domain.vo.common.PageVO;
 import com.qaqxianyuqaq.backend.domain.vo.submission.MyProgressVO;
-import com.qaqxianyuqaq.backend.domain.vo.submission.ProgressVO;
 import com.qaqxianyuqaq.backend.domain.vo.submission.SubmissionResultVO;
 import com.qaqxianyuqaq.backend.domain.vo.submission.SubmissionVO;
 
@@ -22,7 +25,6 @@ import com.qaqxianyuqaq.backend.domain.enums.ChallengeRuntimeType;
 import com.qaqxianyuqaq.backend.domain.enums.EventStatus;
 import com.qaqxianyuqaq.backend.domain.enums.SolveSource;
 import com.qaqxianyuqaq.backend.domain.enums.SubmissionResult;
-import com.qaqxianyuqaq.backend.aspect.Idempotent;
 import com.qaqxianyuqaq.backend.aspect.RateLimit;
 import com.qaqxianyuqaq.backend.exception.ConflictException;
 import com.qaqxianyuqaq.backend.exception.ErrorCode;
@@ -42,10 +44,10 @@ import com.qaqxianyuqaq.backend.service.submission.ScoringService;
 import com.qaqxianyuqaq.backend.service.submission.SubmissionService;
 import com.qaqxianyuqaq.backend.service.contestant.TeamService;
 import com.qaqxianyuqaq.backend.util.DigestUtil;
+import com.qaqxianyuqaq.backend.util.LocationConstants;
 import com.qaqxianyuqaq.backend.util.PageUtil;
 import com.qaqxianyuqaq.backend.util.TimeUtil;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -96,9 +98,9 @@ public class SubmissionServiceImpl implements SubmissionService {
     }
 
     @Override
-    @Transactional
+    // 校验阶段不建立旧快照，计分事务由 award 在锁内开启并提交。
     @RateLimit(scope = "submission")
-    @Idempotent(scope = "submission")
+    @DistributedLock(key = "'submission-user:' + #p2.userId()")
     public SubmissionResultVO submit(String code, SubmitAnswerDTO request,
                                                     UserPrincipal principal) {
         // 1. 校验操作者具备参赛权限
@@ -108,24 +110,26 @@ public class SubmissionServiceImpl implements SubmissionService {
         Challenge challenge = challengeService.requireByCode(code);
         assertAnswerable(challenge);
 
-        // 3. 校验题目所属赛事处于开放状态
-        assertEventOpen(challenge);
-
-        // 4. 容器题目必须提交当前队伍容器实际获得的 Flag
-        validateContainerFlag(challenge, request.answer(), principal);
-
-        // 5. 同一 requestId 重放时返回既有提交结果，避免重复计分
-        SubmissionResultVO replayed = replayByRequestId(request, principal, challenge);
-        if (replayed != null) {
-            return replayed;
+        // 3. 图寻题只接受现场二维码，禁止旧答案或通用 Flag 进入文本判题
+        if (LocationConstants.LOCATION_CATEGORY.equals(challenge.getCategory())) {
+            throw new ConflictException(ErrorCode.LOCATION_QR_REQUIRED, "图寻题仅支持扫描位置二维码");
         }
+
+        // 4. 每次重试均重新校验赛事与当前队伍，防止历史响应绕过当前权限
+        assertEventOpen(challenge);
+        String eventId = challenge.getEventId() == null
+                ? eventService.requireCurrent().getId() : challenge.getEventId();
+        Team team = teamService.requireMembership(eventId, principal.userId());
+
+        // 5. 容器题目必须提交当前队伍容器实际获得的 Flag
+        validateContainerFlag(challenge, request.answer(), principal, team);
 
         // 6. 服务端权威判题：容器 Flag 已通过归属校验，手工题目比较加密标准答案
         boolean correct = judge(challenge, request.answer());
 
         // 7. 交由计分引擎完成名次、加分与落库
         return scoringService.award(principal, challenge, SolveSource.ANSWER, request.answer(),
-                request.requestId(), correct);
+                request.requestId(), correct, team);
     }
 
     @Override
@@ -142,6 +146,26 @@ public class SubmissionServiceImpl implements SubmissionService {
         // 3. 组装响应
         Challenge challenge = challengeMapper.selectById(submission.getChallengeId());
         return toVO(submission, challenge);
+    }
+
+    @Override
+    public PageVO<ManagedSubmissionVO> adminPage(AdminSubmissionQueryDTO filter, PageQueryDTO query,
+                                                UserPrincipal principal) {
+        // 1. 在业务边界验证管理员身份，防止绕过控制器读取他人提交
+        permissionAssert.assertAdmin(principal);
+        EventConfig event = filter.eventId() == null || filter.eventId().isBlank()
+                ? eventService.requireCurrent() : eventService.requireById(filter.eventId());
+
+        // 2. 严格核验队伍的赛事归属，避免通过替换队伍编号跨赛事查询
+        if (filter.teamId() != null && !filter.teamId().isBlank()) {
+            teamService.requireEventTeam(event.getId(), filter.teamId());
+        }
+        RecordTimeRange time = RecordTimeRange.parse(filter.from(), filter.to());
+
+        // 3. 使用绑定参数分页联查，保留错误、重复及二维码提交且不暴露原始答案
+        IPage<ManagedSubmissionVO> page = submissionMapper.adminPage(
+                new Page<>(query.page(), query.pageSize()), event.getId(), filter, time.from(), time.to());
+        return PageUtil.toPage(page, page.getRecords());
     }
 
     @Override
@@ -187,6 +211,10 @@ public class SubmissionServiceImpl implements SubmissionService {
 
         // 6. 分页查询并批量装配题目信息
         IPage<Submission> page = submissionMapper.selectPage(new Page<>(query.page(), query.pageSize()), wrapper);
+        // 当前页为空时保留分页总数，避免空集合批量查询生成非法 SQL。
+        if (page.getRecords().isEmpty()) {
+            return PageUtil.toPage(page, List.of());
+        }
         Map<String, Challenge> challenges = challengeMapper.selectBatchIds(
                         page.getRecords().stream().map(Submission::getChallengeId).distinct().toList())
                 .stream().collect(Collectors.toMap(Challenge::getId, Function.identity()));
@@ -224,7 +252,8 @@ public class SubmissionServiceImpl implements SubmissionService {
         long total = challengeMapper.selectCount(Wrappers.<Challenge>lambdaQuery()
                 .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED)
                 .eq(Challenge::getEventId, event.getId()));
-        Map<String, String> codeById = challengeMapper.selectBatchIds(
+        // 未解题时不发起空集合查询，首次登录也能读取零进度。
+        Map<String, String> codeById = solves.isEmpty() ? Map.of() : challengeMapper.selectBatchIds(
                         solves.stream().map(Solve::getChallengeId).distinct().toList())
                 .stream().collect(Collectors.toMap(Challenge::getId, Challenge::getCode));
         List<String> solvedCodes = solves.stream()
@@ -263,55 +292,6 @@ public class SubmissionServiceImpl implements SubmissionService {
         }
     }
 
-    /** 按 requestId 幂等回放既有提交。 */
-    private SubmissionResultVO replayByRequestId(SubmitAnswerDTO request,
-                                                 UserPrincipal principal, Challenge challenge) {
-        if (request.requestId() == null || request.requestId().isBlank()) {
-            return null;
-        }
-        Submission existing = submissionMapper.selectOne(Wrappers.<Submission>lambdaQuery()
-                .eq(Submission::getRequestId, request.requestId())
-                .eq(Submission::getUserId, principal.userId())
-                .orderByDesc(Submission::getSubmittedAt)
-                .last("LIMIT 1"));
-        if (existing == null) {
-            return null;
-        }
-        String eventId = challenge.getEventId() == null
-                ? eventService.requireCurrent().getId() : challenge.getEventId();
-        Team team = teamService.findMembership(eventId, principal.userId());
-        String subjectKey = team == null ? principal.userId() : team.getId();
-        // 既有记录为正确提交时，回放首次完成信息（名次、得分）
-        if (existing.getResult() == SubmissionResult.CORRECT) {
-            Solve solve = solveMapper.selectOne(Wrappers.<Solve>lambdaQuery()
-                    .eq(Solve::getSubjectKey, subjectKey)
-                    .eq(Solve::getChallengeId, challenge.getId()));
-            if (solve != null) {
-                return new SubmissionResultVO(existing.getId(), challenge.getCode(),
-                        SubmissionResult.CORRECT.apiValue(), "already_solved", solve.getSolvedAt(),
-                        solve.getBasePoints(), solve.getBonusPoints(),
-                        (solve.getBasePoints() == null ? 0 : solve.getBasePoints())
-                                + (solve.getBonusPoints() == null ? 0 : solve.getBonusPoints()),
-                        solve.getSolvePlace(), progressOf(eventId, subjectKey), solve.getSource() == null ? null
-                        : solve.getSource().apiValue());
-            }
-        }
-        return new SubmissionResultVO(existing.getId(), challenge.getCode(),
-                existing.getResult().apiValue(), null, null, 0, 0, 0, null,
-                progressOf(eventId, subjectKey),
-                SolveSource.ANSWER.apiValue());
-    }
-
-    /** 统计进度，用于幂等回放响应。 */
-    private ProgressVO progressOf(String eventId, String subjectKey) {
-        long solved = solveMapper.selectCount(Wrappers.<Solve>lambdaQuery()
-                .eq(Solve::getSubjectKey, subjectKey));
-        long total = challengeMapper.selectCount(Wrappers.<Challenge>lambdaQuery()
-                .eq(Challenge::getStatus, ChallengeStatus.PUBLISHED)
-                .eq(Challenge::getEventId, eventId));
-        return new ProgressVO((int) solved, (int) total);
-    }
-
     /** 服务端判题：比对提交摘要与标准答案。 */
     private boolean judge(Challenge challenge, String answer) {
         if (challenge.getRuntimeType() == ChallengeRuntimeType.DOCKER) {
@@ -325,12 +305,10 @@ public class SubmissionServiceImpl implements SubmissionService {
     }
 
     /** 校验容器 Flag 属于当前用户所在队伍，并记录疑似串通行为。 */
-    private void validateContainerFlag(Challenge challenge, String answer, UserPrincipal principal) {
+    private void validateContainerFlag(Challenge challenge, String answer, UserPrincipal principal, Team team) {
         if (challenge.getRuntimeType() != ChallengeRuntimeType.DOCKER) {
             return;
         }
-        String eventId = challenge.getEventId();
-        Team team = teamService.requireMembership(eventId, principal.userId());
         ChallengeContainerInstance instance = challengeContainerService.requireReady(challenge, team);
         String expected = credentialCipher.decrypt(instance.getFlagSecret());
         if (expected == null || !DigestUtil.constantTimeEquals(expected.trim(), answer.trim())) {

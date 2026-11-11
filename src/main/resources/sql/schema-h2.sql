@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS users (
     id            VARCHAR(40)  NOT NULL,
     username      VARCHAR(64)  NOT NULL,
     password_hash VARCHAR(100) NOT NULL,
-    role          VARCHAR(16)  NOT NULL,
+    role          VARCHAR(16)  NOT NULL COMMENT '管理员/最高管理员/选手角色',
     status        VARCHAR(16)  NOT NULL,
     team_id       VARCHAR(40)  NULL,
     note          VARCHAR(512) NULL,
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS events (
     timezone   VARCHAR(64)  NOT NULL,
     starts_at  TIMESTAMP(3) NULL,
     ends_at    TIMESTAMP(3) NULL,
-    max_team_size INT        NOT NULL DEFAULT 4,
+    max_team_size INT        NOT NULL DEFAULT 3,
     created_at TIMESTAMP(3) NULL,
     updated_at TIMESTAMP(3) NULL,
     PRIMARY KEY (id)
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS challenge_container_instances (
     event_id        VARCHAR(40)  NOT NULL,
     challenge_id    VARCHAR(40)  NOT NULL,
     team_id         VARCHAR(40)  NOT NULL,
-    container_id    VARCHAR(80)  NULL,
+    container_id    VARCHAR(128) NULL,
     container_name  VARCHAR(128) NOT NULL,
     status          VARCHAR(16)  NOT NULL,
     docker_image    VARCHAR(255) NOT NULL,
@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS challenge_container_instances (
     container_ip    VARCHAR(64)  NULL,
     host_ip         VARCHAR(64)  NULL,
     host_port       INT          NULL,
-    container_port  INT          NOT NULL,
+    container_port  INT          NULL,
     last_error      VARCHAR(512) NULL,
     ready_at        TIMESTAMP(3) NULL,
     expires_at      TIMESTAMP(3) NULL,
@@ -214,3 +214,11 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uk_idempotency_scope_key_user
     ON idempotency_records (scope, idempotency_key, user_id);
+
+-- 南邮身份与本站账号的一对一关联，不保存学校密码、密文或令牌。
+CREATE TABLE IF NOT EXISTS njupt_identities (
+    subject VARCHAR(32) NOT NULL,
+    user_id VARCHAR(40) NOT NULL,
+    PRIMARY KEY (subject),
+    UNIQUE (user_id)
+);

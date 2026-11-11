@@ -14,11 +14,14 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.List;
@@ -71,6 +74,12 @@ public class GlobalExceptionHandler {
         return badRequest(List.of(new FieldErrorVO(exception.getParameterName(), "缺少必填参数")));
     }
 
+    /** 文件字段缺失时返回字段错误，避免落入通用 500。 */
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ErrorVO> handleMissingPart(MissingServletRequestPartException exception) {
+        return badRequest(List.of(new FieldErrorVO(exception.getRequestPartName(), "缺少必填文件")));
+    }
+
     /** 处理请求体解析失败。 */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorVO> handleUnreadable(HttpMessageNotReadableException exception) {
@@ -81,7 +90,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
     public ResponseEntity<ErrorVO> handleMediaType(HttpMediaTypeNotSupportedException exception) {
         return ResponseEntity.status(ErrorCode.UNSUPPORTED_MEDIA_TYPE.status())
-                .body(ErrorVO.of(ErrorCode.UNSUPPORTED_MEDIA_TYPE.code(), "请求需使用 application/json",
+                .body(ErrorVO.of(ErrorCode.UNSUPPORTED_MEDIA_TYPE.code(), "请求的 Content-Type 不受支持",
                         RequestUtil.currentRequestId()));
     }
 
@@ -91,6 +100,20 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(ErrorCode.PAYLOAD_TOO_LARGE.status())
                 .body(ErrorVO.of(ErrorCode.PAYLOAD_TOO_LARGE.code(), "文件体积超过服务端限制",
                         RequestUtil.currentRequestId()));
+    }
+
+    /** 未注册的方法保留框架 Allow 头并返回 405，避免被兜底误判为服务器故障。 */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorVO> handleMethod(HttpRequestMethodNotSupportedException exception) {
+        return ResponseEntity.status(ErrorCode.METHOD_NOT_ALLOWED.status()).headers(exception.getHeaders())
+                .body(ErrorVO.of(ErrorCode.METHOD_NOT_ALLOWED.code(), "请求方法不受支持",
+                        RequestUtil.currentRequestId()));
+    }
+
+    /** 查询或路径参数类型错误属于客户端输入错误。 */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorVO> handleArgumentType(MethodArgumentTypeMismatchException exception) {
+        return badRequest(List.of(new FieldErrorVO(exception.getName(), "参数类型错误")));
     }
 
     /** 处理鉴权失败。 */

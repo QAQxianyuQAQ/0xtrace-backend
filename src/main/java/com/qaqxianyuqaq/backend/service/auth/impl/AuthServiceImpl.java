@@ -5,6 +5,10 @@ import com.qaqxianyuqaq.backend.domain.vo.auth.AuthSessionVO;
 import com.qaqxianyuqaq.backend.domain.vo.auth.LoginVO;
 import com.qaqxianyuqaq.backend.domain.vo.auth.MeVO;
 import com.qaqxianyuqaq.backend.security.IssuedToken;
+import com.qaqxianyuqaq.backend.security.NjuptAuthenticationClient;
+import com.qaqxianyuqaq.backend.domain.enums.UserRole;
+import com.qaqxianyuqaq.backend.exception.BusinessException;
+import java.util.Locale;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.qaqxianyuqaq.backend.config.TraceQuestProperties;
@@ -56,11 +60,16 @@ public class AuthServiceImpl implements AuthService {
 
     private final EventService eventService;
 
+    private final NjuptAuthenticationClient njuptClient;
+
+    private final NjuptAccountService njuptAccounts;
+
     public AuthServiceImpl(AuthenticationManager authenticationManager, JwtTokenProvider jwtTokenProvider,
                            UserMapper userMapper, PasswordEncoder passwordEncoder,
                            RateLimitService rateLimitService, SessionService sessionService,
                            TraceQuestProperties properties, TeamService teamService,
-                           EventService eventService) {
+                           EventService eventService, NjuptAuthenticationClient njuptClient,
+                           NjuptAccountService njuptAccounts) {
         this.authenticationManager = authenticationManager;
         this.jwtTokenProvider = jwtTokenProvider;
         this.userMapper = userMapper;
@@ -70,6 +79,8 @@ public class AuthServiceImpl implements AuthService {
         this.properties = properties;
         this.teamService = teamService;
         this.eventService = eventService;
+        this.njuptClient = njuptClient;
+        this.njuptAccounts = njuptAccounts;
     }
 
     @Override
@@ -88,7 +99,7 @@ public class AuthServiceImpl implements AuthService {
 
         // 3. 查询账号；账号不存在时执行一次占位散列校验以抵消时序差异
         User user = userMapper.selectOne(Wrappers.<User>lambdaQuery().eq(User::getUsername, username));
-        if (user == null) {
+        if (user == null || username.regionMatches(true, 0, "njupt:", 0, 6)) {
             passwordEncoder.matches(request.password(), DUMMY_HASH);
             rateLimitService.recordLoginFailure(clientIp, username);
             throw new UnauthorizedException(ErrorCode.INVALID_CREDENTIALS, "账号或密码错误");
@@ -108,14 +119,54 @@ public class AuthServiceImpl implements AuthService {
             throw new UnauthorizedException(ErrorCode.INVALID_CREDENTIALS, "账号或密码错误");
         }
 
-        // 6. 登录成功，清除失败计数并刷新最近登录时间
+        // 6. 登录成功后清除失败计数并签发本站会话。
         rateLimitService.clearLoginFailure(clientIp, username);
+        return issueSession(user);
+    }
+
+    @Override
+    public AuthSessionVO loginNjupt(LoginDTO request, String clientIp) {
+        // 1. 未启用学校认证时关闭入口，学号统一规范化以避免大小写重复账号。
+        if (!properties.getNjupt().isEnabled()) throw new ForbiddenException("学校认证尚未启用");
+        String subject = request.username().trim().toUpperCase(Locale.ROOT);
+        if (!subject.matches("[A-Z0-9][A-Z0-9._-]{0,31}")) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "学号格式无效");
+        }
+        String key = "njupt:" + subject;
+
+        // 2. 学校与本地登录共用地址限流，失败锁定按认证身份隔离。
+        rateLimitService.checkAndConsume("login", clientIp, properties.getRateLimit().getLoginPerMinute());
+        if (rateLimitService.isLoginLocked(clientIp, key)) {
+            throw new com.qaqxianyuqaq.backend.exception.RateLimitedException(
+                    properties.getRateLimit().getLoginFailureWindow().toSeconds());
+        }
+
+        // 3. 仅在学校认证成功后创建本站身份，网络故障和验证码要求不视为密码错误。
+        try {
+            njuptClient.authenticate(subject, request.password());
+        } catch (UnauthorizedException exception) {
+            rateLimitService.recordLoginFailure(clientIp, key);
+            throw exception;
+        }
+        User user = njuptAccounts.resolve(subject);
+
+        // 4. 学校认证只证明身份；本站角色继续由已绑定账号决定。
+        if (user.getStatus() != AccountStatus.ACTIVE) {
+            throw new ForbiddenException(ErrorCode.ACCOUNT_DISABLED, "账号已停用，请联系赛事管理员");
+        }
+
+        // 5. 丢弃学校令牌，只签发沿用现有权限规则的本站会话。
+        rateLimitService.clearLoginFailure(clientIp, key);
+        return issueSession(user);
+    }
+
+    private AuthSessionVO issueSession(User user) {
+        // 1. 刷新本站最近登录时间，保留账号原有队伍及会话版本。
         user.setLastLoginAt(TimeUtil.now());
         userMapper.updateById(user);
 
-        // 7. 基于账号当前会话版本签发 JWT，令牌由控制器写入 HttpOnly Cookie
-        UserPrincipal principal = new UserPrincipal(user);
-        IssuedToken issued = jwtTokenProvider.issue(principal);
+        // 2. 基于当前赛事队伍签发本站 JWT，会话仍使用本站权限与版本。
+        IssuedToken issued = jwtTokenProvider.issue(new UserPrincipal(user));
         Team team = resolveCurrentTeam(user);
         LoginVO loginVO = new LoginVO(user.getId(), user.getUsername(),
                 user.getRole().apiValue(), team == null ? null : team.getId(), issued.expiresAt());
@@ -140,6 +191,7 @@ public class AuthServiceImpl implements AuthService {
         // 2. 补齐当前赛事的队伍与展示字段
         Team team = resolveCurrentTeam(user);
         return new MeVO(user.getId(), user.getUsername(), user.getRole().apiValue(),
+                user.getRole() == UserRole.SUPER_ADMIN,
                 team == null ? null : team.getId(), team == null ? null : team.getName(),
                 user.getNickname(), user.getAvatarUrl(),
                 user.getStatus().apiValue(), user.getLastLoginAt());

@@ -59,6 +59,8 @@ class ScoringServiceImplTest {
 
     private Challenge challenge;
 
+    private Team team;
+
     @BeforeEach
     void setUp() {
         principal = new UserPrincipal("usr_1", "field_129", com.qaqxianyuqaq.backend.domain.enums.UserRole.CONTESTANT,
@@ -72,10 +74,9 @@ class ScoringServiceImplTest {
         challenge.setBonusSecond(60);
         challenge.setBonusThird(30);
         challenge.setBonusOther(0);
-        Team team = new Team();
+        team = new Team();
         team.setId("team_1");
         team.setEventId("evt_1");
-        when(teamService.requireMembership("evt_1", "usr_1")).thenReturn(team);
     }
 
     @Test
@@ -86,7 +87,7 @@ class ScoringServiceImplTest {
         when(challengeMapper.selectCount(any(Wrapper.class))).thenReturn(12L);
 
         SubmissionResultVO result = scoringService.award(principal, challenge,
-                SolveSource.ANSWER, "flag{ok}", "req-1", true);
+                SolveSource.ANSWER, "flag{ok}", "req-1", true, team);
 
         assertThat(result.completion()).isEqualTo("first_solve");
         assertThat(result.basePoints()).isEqualTo(400);
@@ -113,7 +114,7 @@ class ScoringServiceImplTest {
         when(challengeMapper.selectCount(any(Wrapper.class))).thenReturn(12L);
 
         SubmissionResultVO result = scoringService.award(principal, challenge,
-                SolveSource.ANSWER, "flag{ok}", "req-2", true);
+                SolveSource.ANSWER, "flag{ok}", "req-2", true, team);
 
         assertThat(result.completion()).isEqualTo("already_solved");
         assertThat(result.submissionId()).isEqualTo("sub_1");
@@ -129,7 +130,7 @@ class ScoringServiceImplTest {
         when(challengeMapper.selectCount(any(Wrapper.class))).thenReturn(12L);
 
         SubmissionResultVO result = scoringService.award(principal, challenge,
-                SolveSource.ANSWER, "flag{bad}", "req-3", false);
+                SolveSource.ANSWER, "flag{bad}", "req-3", false, team);
 
         assertThat(result.result()).isEqualTo("incorrect");
         assertThat(result.completion()).isNull();

@@ -2,8 +2,12 @@ package com.qaqxianyuqaq.backend.service.contestant;
 
 import com.qaqxianyuqaq.backend.domain.dto.contestant.TeamCreateDTO;
 import com.qaqxianyuqaq.backend.domain.dto.contestant.TeamJoinDTO;
+import com.qaqxianyuqaq.backend.domain.dto.common.PageQueryDTO;
 import com.qaqxianyuqaq.backend.domain.entity.Team;
 import com.qaqxianyuqaq.backend.domain.entity.TeamMember;
+import com.qaqxianyuqaq.backend.domain.vo.admin.ManagedTeamVO;
+import com.qaqxianyuqaq.backend.domain.vo.common.PageVO;
+import com.qaqxianyuqaq.backend.domain.vo.contestant.TeamBriefVO;
 import com.qaqxianyuqaq.backend.domain.vo.contestant.TeamMembershipVO;
 import com.qaqxianyuqaq.backend.security.UserPrincipal;
 
@@ -17,6 +21,9 @@ public interface TeamService {
 
     /** 选手使用队伍唯一标识码加入赛事队伍。 */
     TeamMembershipVO joinTeam(String eventId, TeamJoinDTO request, UserPrincipal principal);
+
+    /** 退出本人在该赛事中的队伍，重复退出保持幂等。 */
+    void leaveTeam(String eventId, UserPrincipal principal);
 
     /** 查询选手在指定赛事中的队伍，未加入时返回 null。 */
     TeamMembershipVO myTeam(String eventId, UserPrincipal principal);
@@ -45,4 +52,10 @@ public interface TeamService {
 
     /** 读取队伍名称，队伍不存在或未组队时返回 null。 */
     String teamName(String teamId);
+
+    /** 分页读取当前赛事队伍及其成员，供管理员后台查看。 */
+    PageVO<ManagedTeamVO> adminPage(String q, PageQueryDTO query, UserPrincipal principal);
+
+    /** 修改当前赛事队伍名称并校验唯一性。 */
+    TeamBriefVO renameManagedTeam(String teamId, String name, UserPrincipal principal);
 }

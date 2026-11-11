@@ -56,83 +56,102 @@ public class ChallengeContainerServiceImpl implements ChallengeContainerService 
     }
 
     @Override
-    @DistributedLock(key = "'team-instance:' + #team.id")
+    @DistributedLock(key = "'team-instance:' + #p1.id")
     public ChallengeRuntimeVO ensureStarted(Challenge challenge, Team team) {
         // 1. 校验题目启用了 Docker 模式并检查单机运行时配置
         RuntimeProperties runtime = properties.getRuntime();
         assertDockerChallenge(challenge, runtime);
         assertPlayable(challenge);
 
-        // 2. 查询队伍唯一实例；同题运行中实例直接复用，其他题目仍在运行则拒绝新开
+        // 2. 查询队伍唯一实例；复用同题启动任务，避免轮询或重试删除进行中的容器
         ChallengeContainerInstance instance = findByTeam(team.getId());
         if (instance != null) {
-            if (isExpired(instance) || instance.getStatus() != ContainerStatus.READY
-                    || !containerStillRunning(instance, runtime)) {
-                destroyAndDelete(instance, runtime);
-                instance = null;
-            } else if (!challenge.getId().equals(instance.getChallengeId())) {
+            boolean sameChallenge = challenge.getId().equals(instance.getChallengeId());
+            if (!sameChallenge && !isExpired(instance) && instance.getStatus() != ContainerStatus.FAILED
+                    && instance.getStatus() != ContainerStatus.STOPPED) {
                 throw new ConflictException("每个队伍同时只能运行一个题目容器，请先摧毁当前容器");
-            } else {
-                return toVO(challenge, instance);
             }
+
+            if (sameChallenge && !isExpired(instance)) {
+                if (instance.getStatus() == ContainerStatus.PENDING
+                        || instance.getStatus() == ContainerStatus.PULLING
+                        || instance.getStatus() == ContainerStatus.STARTING) {
+                    return toVO(challenge, instance);
+                }
+                if (instance.getStatus() == ContainerStatus.READY && containerStillRunning(instance, runtime)) {
+                    return toVO(challenge, instance);
+                }
+            }
+
+            // 过期、失败、停止或 Docker 中已不存在的实例可安全清理后重试
+            destroyAndDelete(instance, runtime);
         }
 
-        // 3. 准备内部网络并拉取题目镜像
-        DockerCliUtil.ensureInternalNetwork(runtime.getDockerBinary(), runtime.getNetwork(),
-                runtime.getCommandTimeout());
-        DockerCliUtil.pull(runtime.getDockerBinary(), challenge.getDockerImage(), challenge.getDockerTag(),
-                runtime.getCommandTimeout());
-
-        // 4. 从镜像 EXPOSE 自动解析内部端口，管理端不再填写 containerPort
-        int containerPort;
-        try {
-            containerPort = DockerCliUtil.inspectImagePort(runtime.getDockerBinary(),
-                    challenge.getDockerImage(), challenge.getDockerTag(), runtime.getCommandTimeout());
-        } catch (RuntimeException exception) {
-            throw new ContainerRuntimeException("无法确定题目镜像监听端口");
-        }
-
-        // 5. 为本队生成新的带盐 Flag，并创建一小时有效的实例记录
+        // 3. 在任何 Docker 操作前落库，使选手可查询到 PENDING 状态
         String flag = resolveFlag(challenge, team);
-        instance = newInstance(challenge, team, flag, containerPort);
+        instance = newInstance(challenge, team, flag);
         instanceMapper.insert(instance);
-        markStatus(instance, ContainerStatus.PULLING, null);
-
-        // 6. 清理同名遗留容器并注入本队 Flag 启动实例
-        DockerCliUtil.removeQuietly(runtime.getDockerBinary(), instance.getContainerName(),
-                runtime.getCommandTimeout());
-        markStatus(instance, ContainerStatus.STARTING, null);
-        String containerId;
+        boolean containerStartAttempted = false;
         try {
-            containerId = DockerCliUtil.startContainer(runtime.getDockerBinary(), instance.getContainerName(),
+            // 4. 拉取阶段可能包含多个限时 Docker 命令；先写入状态供前端快速轮询
+            markStatus(instance, ContainerStatus.PULLING, null);
+            DockerCliUtil.ensureInternalNetwork(runtime.getDockerBinary(), runtime.getNetwork(),
+                    runtime.getCommandTimeout());
+            DockerCliUtil.pull(runtime.getDockerBinary(), challenge.getDockerImage(), challenge.getDockerTag(),
+                    runtime.getCommandTimeout());
+
+            // 5. 从镜像 EXPOSE 自动解析内部端口，并保存以供后续状态恢复
+            int containerPort = DockerCliUtil.inspectImagePort(runtime.getDockerBinary(),
+                    challenge.getDockerImage(), challenge.getDockerTag(), runtime.getCommandTimeout());
+            instance.setContainerPort(containerPort);
+            instance.setUpdatedAt(TimeUtil.now());
+            instanceMapper.updateById(instance);
+
+            // 6. 注入本队 Flag 启动实例
+            markStatus(instance, ContainerStatus.STARTING, null);
+            DockerCliUtil.removeQuietly(runtime.getDockerBinary(), instance.getContainerName(),
+                    runtime.getCommandTimeout());
+            containerStartAttempted = true;
+            String containerId = DockerCliUtil.startContainer(runtime.getDockerBinary(), instance.getContainerName(),
                     challenge.getId(), team.getId(), runtime.getNetwork(), challenge.getDockerImage(),
                     challenge.getDockerTag(), challenge.getFlagEnvName(), flag, containerPort,
                     runtime.getMemoryLimit(), runtime.getCpuLimit(), runtime.getPidsLimit(),
                     runtime.getCommandTimeout());
+
+            // 7. 读取容器状态并等待题目服务端口就绪
+            instance.setContainerId(containerId);
+            DockerCliUtil.ContainerInfo info = DockerCliUtil.inspect(runtime.getDockerBinary(), containerId,
+                    runtime.getNetwork(), containerPort, runtime.getCommandTimeout());
+            if (!DockerCliUtil.waitForPort(info.containerIp(), containerPort,
+                    runtime.getStartTimeout(), runtime.getHealthInterval())) {
+                throw new ContainerRuntimeException("题目容器启动超时");
+            }
+
+            // 8. 端口就绪后才开始计算一小时运行期限，并将实例标记为 READY
+            applyContainerInfo(instance, info);
+            instance.setExpiresAt(TimeUtil.now().plus(runtime.getInstanceTtl()));
+            instance.setStatus(ContainerStatus.READY);
+            instance.setReadyAt(TimeUtil.now());
+            instance.setUpdatedAt(TimeUtil.now());
+            instanceMapper.updateById(instance);
+            return toVO(challenge, instance);
         } catch (RuntimeException exception) {
+            // 9. 仅在启动命令可能已创建容器时清理；拉取失败不应再阻塞等待 Docker
+            if (containerStartAttempted) {
+                try {
+                    DockerCliUtil.removeQuietly(runtime.getDockerBinary(), instance.getContainerName(),
+                            runtime.getCommandTimeout());
+                } catch (ContainerRuntimeException cleanupFailure) {
+                    markFailed(instance, cleanupFailure);
+                    throw cleanupFailure;
+                }
+            }
             markFailed(instance, exception);
+            if (exception instanceof ContainerRuntimeException runtimeException) {
+                throw runtimeException;
+            }
             throw new ContainerRuntimeException("题目容器启动失败");
         }
-
-        // 7. 读取 Docker 随机宿主端口和内部 IP，并等待容器业务端口就绪
-        instance.setContainerId(containerId);
-        instance.setExpiresAt(TimeUtil.now().plus(runtime.getInstanceTtl()));
-        DockerCliUtil.ContainerInfo info = inspectOrFail(instance, runtime);
-        if (!DockerCliUtil.waitForPort(info.containerIp(), containerPort,
-                runtime.getStartTimeout(), runtime.getHealthInterval())) {
-            DockerCliUtil.removeQuietly(runtime.getDockerBinary(), instance.getContainerName(),
-                    runtime.getCommandTimeout());
-            markFailed(instance, new IllegalStateException("容器端口未在限定时间内就绪"));
-            throw new ContainerRuntimeException("题目容器启动超时");
-        }
-
-        // 8. 记录运行地址和到期时间并将实例标记为就绪
-        applyContainerInfo(instance, info);
-        instance.setStatus(ContainerStatus.READY);
-        instance.setReadyAt(TimeUtil.now());
-        instance.setUpdatedAt(TimeUtil.now());
-        instanceMapper.updateById(instance);
-        return toVO(challenge, instance);
     }
 
     @Override
@@ -144,14 +163,16 @@ public class ChallengeContainerServiceImpl implements ChallengeContainerService 
                     null, null, null, null, null, null, null, null, 0L);
         }
 
-        // 2. 发现过期实例时立即销毁并返回停止状态
+        // 2. 查询过期实例只返回停止状态，销毁交给定时清理或显式启停，避免 GET 阻塞或变更资源
         if (isExpired(instance)) {
-            destroyAndDelete(instance, properties.getRuntime());
             return new ChallengeRuntimeVO(null, challenge.getCode(), team.getId(), ContainerStatus.STOPPED.name(),
                     null, null, null, null, null, "容器已到期", null, null, 0L);
         }
 
-        // 3. 将数据库状态转换为前端可展示的运行状态
+        // 3. 只在启动阶段超过其 Docker 命令预算后尝试恢复，避免轮询阻塞在 Docker CLI
+        reconcileStartup(instance, properties.getRuntime());
+
+        // 4. 将数据库状态转换为前端可展示的运行状态
         return toVO(challenge, instance);
     }
 
@@ -189,7 +210,7 @@ public class ChallengeContainerServiceImpl implements ChallengeContainerService 
     }
 
     @Override
-    @DistributedLock(key = "'team-instance-extend:' + #team.id")
+    @DistributedLock(key = "'team-instance-extend:' + #p1.id")
     public ChallengeRuntimeVO extend(Challenge challenge, Team team) {
         // 1. 校验当前队伍确实拥有该题目的就绪容器
         ChallengeContainerInstance instance = requireReady(challenge, team);
@@ -229,9 +250,17 @@ public class ChallengeContainerServiceImpl implements ChallengeContainerService 
                                 .or()
                                 .le(ChallengeContainerInstance::getExpiresAt, TimeUtil.now())));
 
-        // 3. 逐项删除容器和实例，下一轮清理会继续处理失败项
+        // 3. 逐项确认删除，失败项保留原记录且不阻断其他到期实例的清理
+        ContainerRuntimeException failure = null;
         for (ChallengeContainerInstance instance : expired) {
-            destroyAndDelete(instance, runtime);
+            try {
+                destroyAndDelete(instance, runtime);
+            } catch (ContainerRuntimeException exception) {
+                failure = exception;
+            }
+        }
+        if (failure != null) {
+            throw failure;
         }
     }
 
@@ -242,16 +271,22 @@ public class ChallengeContainerServiceImpl implements ChallengeContainerService 
                 Wrappers.<ChallengeContainerInstance>lambdaQuery()
                         .eq(ChallengeContainerInstance::getChallengeId, challengeId));
 
-        // 2. 逐个删除容器并标记停止，单个失败不阻断其余清理
+        // 2. 仅在删除确认后标记停止，保留失败实例供重试且继续处理其他队伍
         RuntimeProperties runtime = properties.getRuntime();
+        ContainerRuntimeException failure = null;
         for (ChallengeContainerInstance instance : instances) {
             try {
                 DockerCliUtil.removeQuietly(runtime.getDockerBinary(), instance.getContainerName(),
                         runtime.getCommandTimeout());
-            } catch (RuntimeException ignored) {
-                // 单个容器清理失败不阻断其余队伍实例
+                markStatus(instance, ContainerStatus.STOPPED, null);
+            } catch (ContainerRuntimeException exception) {
+                failure = exception;
             }
-            markStatus(instance, ContainerStatus.STOPPED, null);
+        }
+
+        // 3. 部分删除失败时明确报告失败，禁止把仍运行的实例当作已清理
+        if (failure != null) {
+            throw failure;
         }
     }
 
@@ -292,7 +327,7 @@ public class ChallengeContainerServiceImpl implements ChallengeContainerService 
     }
 
     /** 新建待启动实例。 */
-    private ChallengeContainerInstance newInstance(Challenge challenge, Team team, String flag, int containerPort) {
+    private ChallengeContainerInstance newInstance(Challenge challenge, Team team, String flag) {
         ChallengeContainerInstance instance = new ChallengeContainerInstance();
         instance.setId(IdGenerator.next("cinst"));
         instance.setEventId(challenge.getEventId());
@@ -304,8 +339,10 @@ public class ChallengeContainerServiceImpl implements ChallengeContainerService 
         instance.setDockerTag(challenge.getDockerTag());
         instance.setFlagEnvName(challenge.getFlagEnvName());
         instance.setFlagSecret(credentialCipher.encrypt(flag));
-        instance.setContainerPort(containerPort);
-        instance.setExpiresAt(TimeUtil.now().plus(properties.getRuntime().getInstanceTtl()));
+        RuntimeProperties runtime = properties.getRuntime();
+        // 启动流程最多执行七次限时 Docker 命令，并为端口等待和定时清理保留窗口
+        instance.setExpiresAt(TimeUtil.now().plus(runtime.getCommandTimeout().multipliedBy(7))
+                .plus(runtime.getStartTimeout()).plus(runtime.getCleanupInterval()));
         instance.setCreatedAt(TimeUtil.now());
         instance.setUpdatedAt(TimeUtil.now());
         return instance;
@@ -331,32 +368,82 @@ public class ChallengeContainerServiceImpl implements ChallengeContainerService 
 
     /** 检查已有 Docker 容器是否仍在运行。 */
     private boolean containerStillRunning(ChallengeContainerInstance instance, RuntimeProperties runtime) {
-        if (blank(instance.getContainerId())) {
+        if (instance.getContainerPort() == null) {
             return false;
         }
+        Duration timeout = runtime.getCommandTimeout().compareTo(Duration.ofSeconds(5)) > 0
+                ? Duration.ofSeconds(5) : runtime.getCommandTimeout();
         try {
             DockerCliUtil.ContainerInfo info = DockerCliUtil.inspect(runtime.getDockerBinary(),
-                    instance.getContainerId(), runtime.getNetwork(), instance.getContainerPort(),
-                    runtime.getCommandTimeout());
+                    blank(instance.getContainerId()) ? instance.getContainerName() : instance.getContainerId(),
+                    runtime.getNetwork(), instance.getContainerPort(), timeout);
             return "running".equalsIgnoreCase(info.state());
         } catch (RuntimeException exception) {
-            return false;
+            try {
+                if (!DockerCliUtil.containerExists(runtime.getDockerBinary(), instance.getContainerName(), timeout)) {
+                    return false;
+                }
+            } catch (RuntimeException ignored) {
+                // 状态未知时保留容器和 Flag，不能因临时故障自动重建。
+            }
+            throw new ContainerRuntimeException("容器状态暂时无法确认，原实例已保留，请稍后重试");
         }
     }
 
-    /** 读取容器状态，失败时清理并标记实例失败。 */
-    private DockerCliUtil.ContainerInfo inspectOrFail(ChallengeContainerInstance instance, RuntimeProperties runtime) {
+    /** 避免查询请求反复等待 Docker；仅恢复超出正常命令预算的启动记录。 */
+    private void reconcileStartup(ChallengeContainerInstance instance, RuntimeProperties runtime) {
+        ContainerStatus status = instance.getStatus();
+        if (status != ContainerStatus.PENDING && status != ContainerStatus.PULLING
+                && status != ContainerStatus.STARTING) {
+            return;
+        }
+
+        Duration staleAfter = switch (status) {
+            case PENDING -> runtime.getCleanupInterval().multipliedBy(2);
+            case PULLING -> runtime.getCommandTimeout().multipliedBy(3)
+                    .plus(runtime.getCleanupInterval().multipliedBy(2));
+            case STARTING -> runtime.getCommandTimeout().multipliedBy(3).plus(runtime.getStartTimeout())
+                    .plus(runtime.getCleanupInterval().multipliedBy(2));
+            default -> Duration.ZERO;
+        };
+        if (instance.getUpdatedAt() != null
+                && TimeUtil.now().isBefore(instance.getUpdatedAt().plus(staleAfter))) {
+            return;
+        }
+
+        if (status != ContainerStatus.STARTING || instance.getContainerPort() == null) {
+            markStatus(instance, ContainerStatus.FAILED, "靶机启动超时，请重试");
+            return;
+        }
+
         try {
-            return DockerCliUtil.inspect(runtime.getDockerBinary(), instance.getContainerId(),
-                    runtime.getNetwork(), instance.getContainerPort(), runtime.getCommandTimeout());
+            // 1. 使用短超时检查稳定容器名，避免状态轮询被 Docker CLI 长时间占用
+            DockerCliUtil.ContainerInfo info = DockerCliUtil.inspect(runtime.getDockerBinary(),
+                    instance.getContainerName(), runtime.getNetwork(), instance.getContainerPort(),
+                    runtime.getCommandTimeout().compareTo(Duration.ofSeconds(5)) > 0
+                            ? Duration.ofSeconds(5) : runtime.getCommandTimeout());
+            if (!"running".equalsIgnoreCase(info.state()) || blank(info.containerId())
+                    || !DockerCliUtil.waitForPort(info.containerIp(), instance.getContainerPort(),
+                    runtime.getHealthInterval(), runtime.getHealthInterval())) {
+                markStatus(instance, ContainerStatus.FAILED, "靶机启动超时，请重试");
+                return;
+            }
+
+            // 2. 端口可连接后补齐地址并开始计算完整运行时长
+            applyContainerInfo(instance, info);
+            instance.setStatus(ContainerStatus.READY);
+            instance.setReadyAt(TimeUtil.now());
+            instance.setExpiresAt(TimeUtil.now().plus(runtime.getInstanceTtl()));
+            instance.setUpdatedAt(TimeUtil.now());
+            instanceMapper.updateById(instance);
         } catch (RuntimeException exception) {
             markFailed(instance, exception);
-            throw new ContainerRuntimeException("无法读取题目容器状态");
         }
     }
 
     /** 将 Docker 检查结果写入实例。 */
     private void applyContainerInfo(ChallengeContainerInstance instance, DockerCliUtil.ContainerInfo info) {
+        instance.setContainerId(info.containerId());
         instance.setContainerIp(info.containerIp());
         instance.setHostIp(info.hostIp());
         instance.setHostPort(info.hostPort());
@@ -371,12 +458,10 @@ public class ChallengeContainerServiceImpl implements ChallengeContainerService 
         instanceMapper.updateById(instance);
     }
 
-    /** 记录失败原因并清理容器；对外不返回 Docker 原始输出。 */
+    /** 保存可公开的失败信息，禁止将 Docker 原始输出写入选手可见状态。 */
     private void markFailed(ChallengeContainerInstance instance, RuntimeException exception) {
-        String message = exception.getMessage();
-        if (message != null && message.length() > 500) {
-            message = message.substring(0, 500);
-        }
+        String message = exception instanceof ContainerRuntimeException ? exception.getMessage()
+                : "题目容器启动失败，请重试或联系管理员检查运行环境";
         markStatus(instance, ContainerStatus.FAILED, message);
     }
 

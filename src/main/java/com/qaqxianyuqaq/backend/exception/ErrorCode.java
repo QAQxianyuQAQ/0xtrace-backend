@@ -10,6 +10,9 @@ import org.springframework.http.HttpStatus;
 public enum ErrorCode {
 
     VALIDATION_ERROR(HttpStatus.BAD_REQUEST, "请求字段无效"),
+    NJUPT_AUTH_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "学校认证暂时不可用，请稍后重试"),
+    NJUPT_CAPTCHA_REQUIRED(HttpStatus.CONFLICT, "学校要求滑块验证，请联系管理员使用参赛账号登录"),
+    NJUPT_ACCOUNT_ACTION_REQUIRED(HttpStatus.CONFLICT, "请先在学校统一认证页面完成账号设置"),
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "账号或密码错误"),
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "未登录或登录已过期"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "权限不足"),
@@ -23,11 +26,13 @@ public enum ErrorCode {
     EVENT_STATE_CONFLICT(HttpStatus.CONFLICT, "赛事状态流转不合法"),
     SUBMISSION_CLOSED(HttpStatus.CONFLICT, "当前不在可作答时间窗内"),
     CHALLENGE_NOT_ANSWERABLE(HttpStatus.CONFLICT, "题目当前不可作答"),
+    LOCATION_QR_REQUIRED(HttpStatus.CONFLICT, "图寻题仅支持扫描位置二维码"),
     CONTAINER_NOT_READY(HttpStatus.CONFLICT, "题目容器尚未就绪"),
     FLAG_OWNER_MISMATCH(HttpStatus.FORBIDDEN, "串通flag并不是好习惯"),
     IDEMPOTENCY_CONFLICT(HttpStatus.CONFLICT, "幂等键复用但请求内容冲突"),
     PAYLOAD_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "文件或请求体过大"),
     UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "不支持的媒体类型"),
+    METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "请求方法不受支持"),
     UNSUPPORTED_FILE_TYPE(HttpStatus.UNPROCESSABLE_ENTITY, "不支持的文件类型"),
     BUSINESS_RULE_VIOLATION(HttpStatus.UNPROCESSABLE_ENTITY, "业务校验失败"),
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "请求过于频繁"),

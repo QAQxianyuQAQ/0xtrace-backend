@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
     id            VARCHAR(40)  NOT NULL COMMENT '业务主键，带前缀随机 ID',
     username      VARCHAR(64)  NOT NULL COMMENT '登录用户名',
     password_hash VARCHAR(100) NOT NULL COMMENT 'BCrypt 密码哈希',
-    role          VARCHAR(16)  NOT NULL COMMENT 'ADMIN/CONTESTANT',
+    role          VARCHAR(16)  NOT NULL COMMENT 'SUPER_ADMIN/ADMIN/CONTESTANT',
     status        VARCHAR(16)  NOT NULL COMMENT 'ACTIVE/DISABLED',
     team_id       VARCHAR(40)  NULL COMMENT '所属队伍',
     note          VARCHAR(512) NULL COMMENT '后台备注',
@@ -199,3 +199,11 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
     PRIMARY KEY (id),
     UNIQUE KEY uk_idempotency_scope_key_user (scope, idempotency_key, user_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '写请求幂等记录表';
+
+-- 南邮身份与本站账号的一对一关联，不保存学校密码、密文或令牌。
+CREATE TABLE IF NOT EXISTS njupt_identities (
+    subject VARCHAR(32) NOT NULL,
+    user_id VARCHAR(40) NOT NULL,
+    PRIMARY KEY (subject),
+    UNIQUE (user_id)
+);

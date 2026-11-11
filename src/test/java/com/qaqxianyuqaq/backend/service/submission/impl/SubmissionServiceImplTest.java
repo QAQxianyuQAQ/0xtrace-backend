@@ -124,7 +124,7 @@ class SubmissionServiceImplTest {
                 .hasMessage("串通flag并不是好习惯")
                 .extracting("teamName", "username")
                 .containsExactly("North Signal", "member");
-        verify(scoringService, never()).award(any(), any(), any(), any(), any(), anyBoolean());
+        verify(scoringService, never()).award(any(), any(), any(), any(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -139,7 +139,7 @@ class SubmissionServiceImplTest {
                 "first_solve", LocalDateTime.now(), 500, 0, 500, 1,
                 new ProgressVO(1, 1), "answer");
         when(scoringService.award(eq(principal), eq(challenge), any(), eq("sacc{own-team}"),
-                isNull(), eq(true))).thenReturn(expected);
+                isNull(), eq(true), eq(team))).thenReturn(expected);
 
         SubmissionResultVO actual = submissionService.submit("PWN-01",
                 new SubmitAnswerDTO("sacc{own-team}", null), principal);

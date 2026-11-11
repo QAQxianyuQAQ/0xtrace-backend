@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qaqxianyuqaq.backend.config.TraceQuestProperties;
 import com.qaqxianyuqaq.backend.exception.ErrorCode;
 import com.qaqxianyuqaq.backend.util.RequestUtil;
+import com.qaqxianyuqaq.backend.util.OriginUtil;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -16,7 +17,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.net.URI;
-import java.util.List;
 import java.util.Set;
 
 /**
@@ -73,28 +73,12 @@ public class SameOriginFilter extends OncePerRequestFilter {
         return path != null && path.startsWith(API_PREFIX);
     }
 
-    /** 校验 Origin 是否与请求主机同源或在白名单内。 */
+    /** 使用已由可信代理还原的协议和 Host，完整比较来源。 */
     private boolean isAllowed(String origin, HttpServletRequest request) {
-        if (origin == null || origin.isBlank()) {
-            return false;
-        }
-        List<String> allowed = properties.getSecurity().getAllowedOrigins();
-        if (allowed != null) {
-            for (String candidate : allowed) {
-                if (candidate != null && candidate.equalsIgnoreCase(origin)) {
-                    return true;
-                }
-            }
-        }
+        if (request.getHeader("Host") == null) return false;
         try {
-            String host = URI.create(origin).getHost();
-            String requestHost = request.getHeader("Host");
-            if (host == null || requestHost == null) {
-                return false;
-            }
-            String requestHostName = requestHost.contains(":")
-                    ? requestHost.substring(0, requestHost.indexOf(':')) : requestHost;
-            return host.equalsIgnoreCase(requestHostName);
+            return OriginUtil.isAllowed(origin, URI.create(request.getRequestURL().toString()),
+                    properties.getSecurity().getAllowedOrigins());
         } catch (IllegalArgumentException exception) {
             return false;
         }

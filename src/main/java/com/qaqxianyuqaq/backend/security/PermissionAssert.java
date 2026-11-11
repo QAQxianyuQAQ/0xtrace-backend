@@ -18,8 +18,18 @@ public class PermissionAssert {
         if (principal == null) {
             throw new UnauthorizedException("未登录或登录已过期");
         }
-        if (principal.role() != UserRole.ADMIN) {
+        if (!principal.isAdmin()) {
             throw new ForbiddenException("该操作仅限管理员");
+        }
+    }
+
+    /** 断言当前主体为最高管理员。 */
+    public void assertSuperAdmin(UserPrincipal principal) {
+        if (principal == null) {
+            throw new UnauthorizedException("未登录或登录已过期");
+        }
+        if (!principal.isSuperAdmin()) {
+            throw new ForbiddenException("该操作仅限最高管理员");
         }
     }
 
@@ -28,7 +38,7 @@ public class PermissionAssert {
         if (principal == null) {
             throw new UnauthorizedException("未登录或登录已过期");
         }
-        if (principal.role() != UserRole.CONTESTANT && principal.role() != UserRole.ADMIN) {
+        if (principal.role() != UserRole.CONTESTANT && !principal.isAdmin()) {
             throw new ForbiddenException("该操作仅限参赛账号");
         }
     }

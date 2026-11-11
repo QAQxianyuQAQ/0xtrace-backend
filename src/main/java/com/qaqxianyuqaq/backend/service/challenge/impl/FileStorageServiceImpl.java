@@ -27,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -202,20 +203,25 @@ public class FileStorageServiceImpl implements FileStorageService {
     }
 
     @Override
-    public ChallengeFile requireFile(String fileId) {
+    public ChallengeFile requireFile(String fileId, UserPrincipal viewer) {
+        // 1. 查询文件及其所属题目，避免孤立文件继续被下载
         ChallengeFile file = challengeFileMapper.selectById(fileId);
         if (file == null) {
+            throw new NotFoundException("文件不存在");
+        }
+        Challenge challenge = challengeMapper.selectById(file.getChallengeId());
+        // 2. 管理员可预览全部题目，选手只能下载当前可见题目的文件
+        if (challenge == null || viewer == null || (!viewer.isAdmin() && !challenge.getStatus().visibleToContestant())) {
             throw new NotFoundException("文件不存在");
         }
         return file;
     }
 
     @Override
-    public String presignedDownloadUrl(ChallengeFile file) {
+    public InputStream openFile(ChallengeFile file) {
+        // 1. 经 MinIO 工具读取对象，由 HTTP 资源响应负责关闭流
         try {
-            // 生成短效预签名地址，MinIO 凭证不下发到客户端
-            return MinioUtil.presignedGetUrl(minioClient, properties.getMinio().getBucket(), file.getStorageKey(),
-                    properties.getMinio().getPresignTtl());
+            return MinioUtil.getObject(minioClient, properties.getMinio().getBucket(), file.getStorageKey());
         } catch (Exception exception) {
             throw new StorageException(ErrorCode.STORAGE_ERROR, "对象存储暂不可用，请稍后重试");
         }

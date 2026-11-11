@@ -1,6 +1,5 @@
 package com.qaqxianyuqaq.backend.controller.contestant;
 
-import com.qaqxianyuqaq.backend.aspect.AuditAction;
 import com.qaqxianyuqaq.backend.aspect.RateLimit;
 import com.qaqxianyuqaq.backend.domain.dto.contestant.TeamCreateDTO;
 import com.qaqxianyuqaq.backend.domain.dto.contestant.TeamJoinDTO;
@@ -11,7 +10,9 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,7 +33,6 @@ public class EventTeamController {
     /** 创建赛事队伍并返回只对该赛事有效的唯一标识码。 */
     @PostMapping
     @RateLimit(scope = "team-write")
-    @AuditAction(value = "team.created", entityType = "team")
     public ResponseEntity<TeamMembershipVO> create(
             @PathVariable String eventId,
             @Valid @RequestBody TeamCreateDTO request,
@@ -44,12 +44,22 @@ public class EventTeamController {
     /** 使用队伍唯一标识码加入赛事队伍。 */
     @PostMapping("/join")
     @RateLimit(scope = "team-write")
-    @AuditAction(value = "team.joined", entityType = "team")
     public TeamMembershipVO join(
             @PathVariable String eventId,
             @Valid @RequestBody TeamJoinDTO request,
             @AuthenticationPrincipal UserPrincipal principal) {
         return teamService.joinTeam(eventId, request, principal);
+    }
+
+    /** 退出本人在该赛事中的队伍，保留队伍与历史数据。 */
+    @DeleteMapping("/me")
+    @PreAuthorize("hasRole('CONTESTANT')")
+    @RateLimit(scope = "team-write")
+    public ResponseEntity<Void> leave(
+            @PathVariable String eventId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        teamService.leaveTeam(eventId, principal);
+        return ResponseEntity.noContent().build();
     }
 
     /** 查看当前选手在该赛事的队伍。 */

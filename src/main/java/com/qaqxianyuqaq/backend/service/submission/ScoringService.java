@@ -3,6 +3,7 @@ package com.qaqxianyuqaq.backend.service.submission;
 import com.qaqxianyuqaq.backend.domain.vo.submission.SubmissionResultVO;
 
 import com.qaqxianyuqaq.backend.domain.entity.Challenge;
+import com.qaqxianyuqaq.backend.domain.entity.Team;
 import com.qaqxianyuqaq.backend.domain.enums.SolveSource;
 import com.qaqxianyuqaq.backend.security.UserPrincipal;
 
@@ -18,10 +19,11 @@ public interface ScoringService {
      * @param answerText 提交内容，错误时不落明文
      * @param requestId  客户端请求 ID
      * @param correct    是否判定通过
+     * @param team       入口已校验的赛事队伍，参与幂等指纹以隔离换队后的请求
      * @return 与 8.3 节一致的判题结果
      */
     SubmissionResultVO award(UserPrincipal principal, Challenge challenge, SolveSource source,
-                                            String answerText, String requestId, boolean correct);
+                                            String answerText, String requestId, boolean correct, Team team);
 
     /** 组装选手可见的题目状态（unsolved/solved），供题目接口复用。 */
     String myStatus(UserPrincipal viewer, Challenge challenge);

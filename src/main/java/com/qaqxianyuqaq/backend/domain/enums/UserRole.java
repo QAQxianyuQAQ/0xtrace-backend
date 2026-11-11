@@ -1,12 +1,13 @@
 package com.qaqxianyuqaq.backend.domain.enums;
 
-/** 账号角色：对应接口契约中的 public/contestant/admin 三类权限来源。 */
+/** 账号角色：最高管理员与普通管理员对外统一暴露为管理员。 */
 public enum UserRole {
+    SUPER_ADMIN,
     ADMIN,
     CONTESTANT;
 
     /** 转换为对外暴露的小写角色字符串。 */
     public String apiValue() {
-        return name().toLowerCase();
+        return this == SUPER_ADMIN ? "admin" : name().toLowerCase();
     }
 }

@@ -2,6 +2,8 @@ package com.qaqxianyuqaq.backend.util;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qaqxianyuqaq.backend.exception.ContainerRuntimeException;
+import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayOutputStream;
 import java.net.InetSocketAddress;
@@ -26,7 +28,8 @@ public final class DockerCliUtil {
     }
 
     /** 容器检查结果，仅保留运行时需要的最小字段。 */
-    public record ContainerInfo(String state, String containerIp, String hostIp, Integer hostPort) {
+    public record ContainerInfo(String containerId, String state, String containerIp, String hostIp,
+                                Integer hostPort) {
     }
 
     /** 执行 Docker 命令，超时后强制终止并抛出统一运行时异常。 */
@@ -78,9 +81,22 @@ public final class DockerCliUtil {
         }
     }
 
-    /** 拉取指定镜像和标签。 */
+    /** 优先复用管理员已加载的镜像，缺失时才限时拉取，避免内网每次启动访问仓库。 */
     public static void pull(String dockerBinary, String image, String tag, Duration timeout) {
-        run(dockerBinary, List.of("pull", image + ":" + tag), timeout);
+        String reference = image + ":" + tag;
+        try {
+            run(dockerBinary, List.of("image", "inspect", "--format", "{{.Id}}", reference), timeout);
+            return;
+        } catch (IllegalStateException ignored) {
+            // 本地镜像不存在时才访问仓库；镜像更新由管理员预先拉取或离线加载。
+        }
+        try {
+            run(dockerBinary, List.of("pull", reference),
+                    timeout.compareTo(Duration.ofSeconds(45)) > 0 ? Duration.ofSeconds(45) : timeout);
+        } catch (IllegalStateException exception) {
+            LoggerFactory.getLogger(DockerCliUtil.class).warn("题目镜像准备失败, image={}", reference, exception);
+            throw new ContainerRuntimeException("题目镜像不可用，请联系管理员预加载镜像或检查镜像仓库连接");
+        }
     }
 
     /** 读取镜像声明的第一个 TCP 监听端口，避免让管理端手工填写容器端口。 */
@@ -109,13 +125,26 @@ public final class DockerCliUtil {
         }
     }
 
-    /** 删除同名遗留容器，避免名称冲突。 */
+    /** 仅在只读查询确认容器不存在时忽略删除错误，避免丢失仍在运行的实例记录。 */
     public static void removeQuietly(String dockerBinary, String containerName, Duration timeout) {
         try {
             run(dockerBinary, List.of("rm", "-f", containerName), timeout);
-        } catch (IllegalStateException ignored) {
-            // 容器不存在属于正常清理路径
+        } catch (IllegalStateException exception) {
+            try {
+                if (!containerExists(dockerBinary, containerName, timeout)) {
+                    return;
+                }
+            } catch (IllegalStateException ignored) {
+                // 无法确认删除结果时保留原记录，不把 Docker 故障当作容器不存在。
+            }
+            throw new ContainerRuntimeException("容器删除尚未确认，原实例已保留，请稍后重试");
         }
+    }
+
+    /** 按完整名称确认容器是否存在，避免名称前缀匹配误认其他队伍。 */
+    public static boolean containerExists(String dockerBinary, String containerName, Duration timeout) {
+        return run(dockerBinary, List.of("container", "ls", "--all", "--format", "{{.Names}}",
+                "--filter", "name=" + containerName), timeout).lines().anyMatch(containerName::equals);
     }
 
     /** 启动容器并返回容器标识；宿主端口只绑定回环地址并随机分配。 */
@@ -125,7 +154,7 @@ public final class DockerCliUtil {
                                         String memoryLimit, String cpuLimit, long pidsLimit,
                                         Duration timeout) {
         List<String> args = List.of(
-                "run", "-d",
+                "run", "-d", "--pull=never",
                 "--name", containerName,
                 "--label", "tracequest.managed=true",
                 "--label", "tracequest.challenge=" + challengeId,
@@ -139,8 +168,16 @@ public final class DockerCliUtil {
                 "-p", "127.0.0.1::" + containerPort,
                 "-e", flagEnvName + "=" + flagValue,
                 image + ":" + tag);
-        return run(dockerBinary, args, timeout).lines().findFirst().orElseThrow(
-                () -> new IllegalStateException("Docker 未返回容器标识"));
+        return parseContainerId(run(dockerBinary, args, timeout));
+    }
+
+    /** 从 Docker 输出中提取完整容器标识，跳过内核告警等非标识文本。 */
+    static String parseContainerId(String output) {
+        return output.lines()
+                .map(String::trim)
+                .filter(line -> line.matches("[0-9a-fA-F]{12,64}"))
+                .reduce((ignored, current) -> current)
+                .orElseThrow(() -> new IllegalStateException("Docker 未返回有效容器标识"));
     }
 
     /** 查询容器状态、内部 IP 和随机宿主端口。 */
@@ -149,6 +186,7 @@ public final class DockerCliUtil {
         String json = run(dockerBinary, List.of("inspect", containerId), timeout);
         try {
             JsonNode root = MAPPER.readTree(json).path(0);
+            String inspectedContainerId = root.path("Id").asText("");
             String state = root.path("State").path("Status").asText("");
             JsonNode networks = root.path("NetworkSettings").path("Networks");
             String containerIp = networks.path(network).path("IPAddress").asText(null);
@@ -157,7 +195,8 @@ public final class DockerCliUtil {
             JsonNode binding = bindings.isArray() && !bindings.isEmpty() ? bindings.path(0) : null;
             String hostIp = binding == null ? null : binding.path("HostIp").asText(null);
             int hostPort = binding == null ? 0 : binding.path("HostPort").asInt(0);
-            return new ContainerInfo(state, containerIp, hostIp, hostPort <= 0 ? null : hostPort);
+            return new ContainerInfo(inspectedContainerId, state, containerIp, hostIp,
+                    hostPort <= 0 ? null : hostPort);
         } catch (Exception exception) {
             throw new IllegalStateException("无法解析 Docker 容器状态", exception);
         }

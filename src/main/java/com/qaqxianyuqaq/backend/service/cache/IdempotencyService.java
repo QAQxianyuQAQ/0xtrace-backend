@@ -12,6 +12,6 @@ public interface IdempotencyService {
     /** 查询已保存的响应快照；键相同但请求内容不同时抛出 409 冲突。 */
     Optional<String> findResponse(String scope, String idempotencyKey, String userId, String requestHash);
 
-    /** 保存首次成功响应快照。 */
-    void saveResponse(String scope, String idempotencyKey, String userId, String requestHash, String responseJson);
+    /** 保存并返回首次成功响应快照；同内容并发重试返回已保存快照。 */
+    String saveResponse(String scope, String idempotencyKey, String userId, String requestHash, String responseJson);
 }

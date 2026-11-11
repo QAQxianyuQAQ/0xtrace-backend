@@ -17,12 +17,15 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.ResponseStatus;
 
 import java.time.Duration;
 import java.util.Map;
@@ -59,7 +62,31 @@ public class AuthController {
         // 1. 校验账号密码并签发令牌
         AuthSessionVO session = authService.login(request, RequestUtil.clientIp(httpRequest));
 
-        // 2. 令牌写入 HttpOnly Cookie，禁止前端脚本读取
+        return writeSession(session, httpResponse);
+    }
+
+    /** 供登录页判断可用的认证入口，不包含凭据或学校令牌。 */
+    @GetMapping("/providers")
+    public Map<String, Boolean> providers() {
+        return Map.of("local", true, "njupt", properties.getNjupt().isEnabled());
+    }
+
+    /** 为静态管理页面提供只校验当前会话角色、不查询后台业务数据的入口。 */
+    @GetMapping("/admin-access")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void adminAccess() {
+    }
+
+    /** 学校认证成功后使用同一套本站 Cookie 会话。 */
+    @PostMapping("/njupt/login")
+    public LoginVO loginNjupt(@Valid @RequestBody LoginDTO request, HttpServletRequest httpRequest,
+                              HttpServletResponse httpResponse) {
+        return writeSession(authService.loginNjupt(request, RequestUtil.clientIp(httpRequest)), httpResponse);
+    }
+
+    private LoginVO writeSession(AuthSessionVO session, HttpServletResponse httpResponse) {
+        // 令牌写入 HttpOnly Cookie，禁止前端脚本读取。
         ResponseCookie cookie = ResponseCookie.from(properties.getSecurity().getCookieName(), session.token())
                 .httpOnly(true)
                 .secure(properties.getSecurity().isCookieSecure())

@@ -9,8 +9,14 @@ import com.qaqxianyuqaq.backend.domain.vo.submission.SubmissionVO;
 
 import com.qaqxianyuqaq.backend.security.UserPrincipal;
 
+import com.qaqxianyuqaq.backend.domain.dto.admin.AdminSubmissionQueryDTO;
+import com.qaqxianyuqaq.backend.domain.vo.submission.ManagedSubmissionVO;
+
 /** 答案提交与提交记录服务。 */
 public interface SubmissionService {
+    /** 管理员按赛事分页检索全部已落库判题记录。 */
+    PageVO<ManagedSubmissionVO> adminPage(AdminSubmissionQueryDTO filter, PageQueryDTO query, UserPrincipal principal);
+
 
     /** 提交文本/Flag 答案，服务端权威判题并原子记分。 */
     SubmissionResultVO submit(String code, SubmitAnswerDTO request,
